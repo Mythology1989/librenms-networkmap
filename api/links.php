@@ -40,6 +40,8 @@ if ($method === 'GET') {
             p_local.ifAlias,
             p_local.ifSpeed,
             p_local.ifOperStatus,
+            p_local.ifInOctets,
+            p_local.ifOutOctets,
             p_remote.ifAlias AS remote_ifAlias
         FROM plugin_networkmap_links ml
         LEFT JOIN ports p_local  ON p_local.port_id  = ml.local_port_id
@@ -56,6 +58,18 @@ if ($method === 'GET') {
 
     foreach ($lldp_rows as $row) {
         $local_port = !empty($row['ifAlias']) ? $row['ifAlias'] : 'port_' . $row['local_port_id'];
+        $port_id    = (int) $row['local_port_id'];
+        $speed      = (int) $row['ifSpeed'];
+
+        [$in_bps, $out_bps] = netmap_calc_bps(
+            $port_id,
+            (int) $row['ifInOctets'],
+            (int) $row['ifOutOctets']
+        );
+
+        $utilization_pct = ($speed > 0 && ($in_bps > 0 || $out_bps > 0))
+            ? round(max($in_bps, $out_bps) / $speed * 100, 2)
+            : 0.0;
 
         $links[] = [
             'id'               => 'lldp_' . (int) $row['id'],
@@ -65,10 +79,10 @@ if ($method === 'GET') {
             'local_port'       => $local_port,
             'remote_port'      => 'port_' . (int) $row['remote_port_id'],
             'status'           => ($row['ifOperStatus'] === 'up') ? 'up' : 'down',
-            'speed_bps'        => (int) $row['ifSpeed'],
-            'in_bps'           => 0,
-            'out_bps'          => 0,
-            'utilization_pct'  => 0.0,
+            'speed_bps'        => $speed,
+            'in_bps'           => $in_bps,
+            'out_bps'          => $out_bps,
+            'utilization_pct'  => $utilization_pct,
         ];
     }
 
@@ -80,6 +94,24 @@ if ($method === 'GET') {
             ? $row['remote_ifAlias']
             : ($row['remote_port_id'] !== null ? 'port_' . (int) $row['remote_port_id'] : null);
 
+        $speed   = (int) $row['ifSpeed'];
+        $port_id = $row['local_port_id'] !== null ? (int) $row['local_port_id'] : null;
+
+        if ($port_id !== null && $row['ifInOctets'] !== null) {
+            [$in_bps, $out_bps] = netmap_calc_bps(
+                $port_id,
+                (int) $row['ifInOctets'],
+                (int) $row['ifOutOctets']
+            );
+        } else {
+            $in_bps  = 0;
+            $out_bps = 0;
+        }
+
+        $utilization_pct = ($speed > 0 && ($in_bps > 0 || $out_bps > 0))
+            ? round(max($in_bps, $out_bps) / $speed * 100, 2)
+            : 0.0;
+
         $links[] = [
             'id'               => 'manual_' . (int) $row['id'],
             'type'             => 'manual',
@@ -89,10 +121,10 @@ if ($method === 'GET') {
             'remote_port'      => $remote_port,
             'label'            => $row['label'],
             'status'           => ($row['ifOperStatus'] === 'up') ? 'up' : 'down',
-            'speed_bps'        => (int) $row['ifSpeed'],
-            'in_bps'           => 0,
-            'out_bps'          => 0,
-            'utilization_pct'  => 0.0,
+            'speed_bps'        => $speed,
+            'in_bps'           => $in_bps,
+            'out_bps'          => $out_bps,
+            'utilization_pct'  => $utilization_pct,
         ];
     }
 

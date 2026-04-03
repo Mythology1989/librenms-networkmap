@@ -115,6 +115,27 @@
         return '#95a5a6';
     }
 
+    /**
+     * Calculate polyline weight (px) proportional to link utilization.
+     *
+     * Uses a logarithmic scale so low-traffic links remain visible and
+     * high-traffic links don't dominate the map:
+     *   0%   → 1 px
+     *   100% → 8 px
+     *
+     * Formula: 1 + 7 * log(1 + pct) / log(101)
+     *
+     * @param {number} utilization_pct - 0 to 100 (can exceed 100)
+     * @returns {number} line weight in pixels
+     */
+    function linkWeight(utilization_pct) {
+        if (!utilization_pct || utilization_pct <= 0) {
+            return 1;
+        }
+        const clamped = Math.min(utilization_pct, 100);
+        return Math.max(1, Math.min(8, 1 + 7 * Math.log(1 + clamped) / Math.log(101)));
+    }
+
     // ── Loading overlay ──────────────────────────────────────────────────
 
     function showLoading() {
@@ -206,7 +227,7 @@
 
             const polylineOpts = {
                 color: linkColor(link.status),
-                weight: 2,
+                weight: linkWeight(link.utilization_pct || 0),
                 opacity: 0.7
             };
 
@@ -219,7 +240,10 @@
 
             // Tooltip on hover
             const statusLabel = (link.status || 'unknown').toUpperCase();
-            const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}\n${formatSpeed(link.speed_bps)} | ${statusLabel}`;
+            const utilizationLabel = link.utilization_pct > 0
+                ? ` | ${link.utilization_pct.toFixed(1)}%`
+                : '';
+            const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}\n${formatSpeed(link.speed_bps)} | ${statusLabel}${utilizationLabel}`;
 
             line.bindTooltip(tooltipText, {
                 className: 'netmap-link-tooltip',
@@ -228,11 +252,15 @@
 
             // Popup on click
             const statusClass = link.status === 'up' ? 'status-up' : 'status-down';
+            const trafficHtml = (link.in_bps > 0 || link.out_bps > 0)
+                ? `<div>Tráfico: &#8595;${formatSpeed(link.in_bps)} / &#8593;${formatSpeed(link.out_bps)}</div>
+  <div>Utilización: ${link.utilization_pct.toFixed(1)}%</div>`
+                : '';
             const popupHtml = `<div class="netmap-popup">
   <h4>${escapeHtml(link.local_port)} &#9472;&#9472;&#9472;&#9472; ${escapeHtml(link.remote_port)}</h4>
   <div>Velocidad: ${formatSpeed(link.speed_bps)}</div>
   <div>Estado: <span class="${statusClass}">${statusLabel}</span></div>
-</div>`;
+  ${trafficHtml}</div>`;
 
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);

@@ -125,6 +125,17 @@ siempre saldrá a 0.
   `COUNT(a.alert_id)` falla en producción. Usar `COUNT(a.id)` en su lugar.
   Verificado 2026-04-03. El campo `state = 1` sigue siendo el filtro correcto
   para alertas activas (state=0 = resuelta).
+- **`plugin_networkmap_port_cache` — comportamiento del cálculo de bps:**
+  `ifInOctets` en la tabla `ports` solo cambia cuando el poller de LibreNMS
+  ejecuta SNMP (cada ~5 minutos). Si entre dos llamadas API los octets no han
+  cambiado (`in_octets == prev_in`), `netmap_calc_bps()` devuelve el bps
+  calculado en la última actualización real (sin tocar la caché). Así el mapa
+  muestra siempre el último valor conocido en lugar de 0 entre ciclos de polling.
+  Verificado en producción 2026-04-03: 109/109 enlaces con tráfico real.
+- **Utilización > 100%** es posible en puertos donde `ifSpeed` está incorrecto o
+  es 0 (p.ej. interfaces VLAN/bridge). La función `linkWeight()` clampea a 100%
+  para el cálculo del grosor (max 8px). La utilización en el popup sí puede
+  superar 100% — es información útil para detectar links mal configurados.
 
 ## Convenciones
 - Commits: `tipo(scope): mensaje` — feat, fix, chore, docs, refactor

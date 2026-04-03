@@ -3,7 +3,7 @@
 > Plugin PHP nativo para LibreNMS que muestra un mapa geográfico interactivo
 > con estado y tráfico en tiempo real de todos los dispositivos monitorizados.
 
-## Estado: FASE 2 COMPLETADA + COMPATIBILIDAD LibreNMS 26.x
+## Estado: FASE 3 COMPLETADA
 Última actualización: 2026-04-03
 
 ---
@@ -44,10 +44,10 @@
 
 ## Fase 3: Tráfico real y caché
 
-- [ ] `plugin_networkmap_port_cache` — implementar snapshot de octets
-- [ ] Cálculo bps en `api/links.php` con detección de counter wrap (32-bit)
-- [ ] Grosor de línea proporcional a % de utilización (escala logarítmica 1px–8px)
-- [ ] AJAX polling con intervalo configurable (default 60s, sin recargar página)
+- [x] `plugin_networkmap_port_cache` — implementar snapshot de octets (2026-04-03)
+- [x] Cálculo bps en `api/links.php` con detección de counter wrap (32-bit) (2026-04-03)
+- [x] Grosor de línea proporcional a % de utilización (escala logarítmica 1px–8px) (2026-04-03)
+- [x] AJAX polling con intervalo configurable (default 60s, sin recargar página) (ya implementado en Fase 2)
 
 ## Fase 4: Features avanzadas
 
