@@ -54,56 +54,10 @@
         return;
     }
 
-    function addOsmTiles() {
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 18
-        }).addTo(map);
-    }
-
-    // deferStart: true while waiting for async Google Maps scripts to load.
-    // When true, the final loadData() call at the bottom is skipped;
-    // Google init callbacks call loadData() themselves.
-    let deferStart = false;
-
-    if (config.mapProvider === 'google' && config.googleApiKey) {
-        deferStart = true;
-        let _gReady = false, _mReady = false;
-        const tryInitGoogleLayer = function () {
-            if (!_gReady || !_mReady) { return; }
-            if (typeof google !== 'undefined' && typeof google.maps !== 'undefined' &&
-                    L.gridLayer && L.gridLayer.googleMutant) {
-                L.gridLayer.googleMutant({ type: 'roadmap', maxZoom: 22 }).addTo(map);
-            } else {
-                addOsmTiles(); // Mutant not available — fall back to OSM
-            }
-            loadData();
-        };
-        // Use callback= so google.maps is fully ready when the callback fires
-        window.__nmGoogleMapsReady = function () { _gReady = true; tryInitGoogleLayer(); };
-
-        const gScript = document.createElement('script');
-        gScript.src = 'https://maps.googleapis.com/maps/api/js?key=' +
-            encodeURIComponent(config.googleApiKey) + '&v=weekly&callback=__nmGoogleMapsReady';
-        gScript.onerror = function () { _gReady = true; tryInitGoogleLayer(); };
-        document.head.appendChild(gScript);
-
-        const mScript = document.createElement('script');
-        mScript.src = 'https://cdn.jsdelivr.net/npm/leaflet.gridlayer.googlemutant@0.13.11/dist/Leaflet.GoogleMutant.js';
-        mScript.onload  = function () { _mReady = true; tryInitGoogleLayer(); };
-        mScript.onerror = function () { _mReady = true; tryInitGoogleLayer(); };
-        document.head.appendChild(mScript);
-    } else {
-        if (config.mapProvider === 'google') {
-            // Selected but no API key configured
-            if (loadingEl) {
-                loadingEl.textContent = 'Google Maps seleccionado sin API key — usando OpenStreetMap.';
-                loadingEl.classList.add('visible');
-                setTimeout(function () { loadingEl.classList.remove('visible'); }, 5000);
-            }
-        }
-        addOsmTiles();
-    }
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18
+    }).addTo(map);
 
     // Layer groups — order matters: links bottom, link labels above, devices middle, labels top
     let linkLayer      = L.layerGroup().addTo(map);
@@ -710,9 +664,7 @@
     }
 
     // ── Initial load ─────────────────────────────────────────────────────
-    // deferStart is true when Google Maps scripts are loading asynchronously;
-    // those callbacks call loadData() themselves once scripts are ready.
 
-    if (!deferStart) { loadData(); }
+    loadData();
 
 })();

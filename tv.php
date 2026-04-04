@@ -140,11 +140,6 @@ if (is_array($manual_raw)) {
 $hidden_links_raw = netmap_get_setting('hidden_links', '[]');
 $hidden_links_tv  = json_decode($hidden_links_raw, true);
 if (!is_array($hidden_links_tv)) { $hidden_links_tv = []; }
-
-$tv_link_priorities_raw = netmap_get_setting('link_priorities', '{}');
-$tv_link_priorities     = json_decode($tv_link_priorities_raw, true);
-if (!is_array($tv_link_priorities)) { $tv_link_priorities = []; }
-
 if (!empty($hidden_links_tv)) {
     $links_arr = array_values(array_filter($links_arr, function ($link) use ($hidden_links_tv) {
         return !in_array($link['id'] ?? '', $hidden_links_tv, true);
@@ -265,9 +260,8 @@ if (typeof L === 'undefined') {
 (function () {
     'use strict';
 
-    var TV_TOKEN        = <?= json_encode($token) ?>;
-    var REFRESH_MS      = <?= $refresh_ms ?>;
-    var LINK_PRIORITIES = <?= json_encode($tv_link_priorities) ?>;
+    var TV_TOKEN   = <?= json_encode($token) ?>;
+    var REFRESH_MS = <?= $refresh_ms ?>;
     var JSON_URL   = '/plugin/v1/NetworkMap?view=tv&token=' + encodeURIComponent(TV_TOKEN) + '&format=json';
 
     var map = L.map('tv-map', {
@@ -340,18 +334,13 @@ if (typeof L === 'undefined') {
         var deviceCoords = {};
         devices.forEach(function (d) { deviceCoords[d.id] = [d.lat, d.lng]; });
 
-        // Pre-pass: for each canonical device pair, pick best link for label.
-        // Priority setting wins; in_bps used as tiebreaker. Links with 0 bps are skipped.
+        // Pre-pass: for each canonical device pair, keep the link with highest in_bps.
         var bestLabelLink = {};
         links.forEach(function (link) {
             if (!link.in_bps || link.in_bps <= 0) { return; }
             var a = link.local_device_id, b = link.remote_device_id;
             var pairKey = Math.min(a, b) + '-' + Math.max(a, b);
-            var cur = bestLabelLink[pairKey];
-            if (!cur) { bestLabelLink[pairKey] = link; return; }
-            var pa = (LINK_PRIORITIES[link.id] !== undefined) ? LINK_PRIORITIES[link.id] : 999;
-            var pb = (LINK_PRIORITIES[cur.id]  !== undefined) ? LINK_PRIORITIES[cur.id]  : 999;
-            if (pa < pb || (pa === pb && link.in_bps > cur.in_bps)) {
+            if (!bestLabelLink[pairKey] || link.in_bps > bestLabelLink[pairKey].in_bps) {
                 bestLabelLink[pairKey] = link;
             }
         });
