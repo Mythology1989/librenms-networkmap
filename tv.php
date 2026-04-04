@@ -202,6 +202,19 @@ html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
     pointer-events: none;
     margin-top: 4px;
 }
+
+.netmap-link-label {
+    font-size: 10px;
+    font-weight: bold;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: 3px;
+    padding: 1px 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    display: inline-block;
+}
 </style>
 </head>
 <body>
@@ -251,11 +264,20 @@ if (typeof L === 'undefined') {
         subdomains: 'abcd'
     }).addTo(map);
 
-    // Layer groups: links below devices
-    var linkLayer   = L.layerGroup().addTo(map);
-    var deviceLayer = L.layerGroup().addTo(map);
+    // Layer groups: links → link labels → devices
+    var linkLayer      = L.layerGroup().addTo(map);
+    var linkLabelLayer = L.layerGroup().addTo(map);
+    var deviceLayer    = L.layerGroup().addTo(map);
 
     var tvFirstLoad = true;
+
+    // Compact speed format for always-visible link labels: "12M", "450K", "1.2G"
+    function formatSpeedCompact(bps) {
+        if (bps >= 1e9) { return (bps / 1e9).toFixed(1) + 'G'; }
+        if (bps >= 1e6) { return (bps / 1e6).toFixed(0) + 'M'; }
+        if (bps >= 1e3) { return (bps / 1e3).toFixed(0) + 'K'; }
+        return bps + 'b';
+    }
 
     function escapeHtml(str) {
         if (str == null) { return ''; }
@@ -292,6 +314,7 @@ if (typeof L === 'undefined') {
 
     function renderMap(devices, links) {
         linkLayer.clearLayers();
+        linkLabelLayer.clearLayers();
         deviceLayer.clearLayers();
 
         // Build device coordinate lookup for link rendering
@@ -311,6 +334,25 @@ if (typeof L === 'undefined') {
             };
             if (link.type === 'manual') { opts.dashArray = '6, 4'; }
             L.polyline([from, to], opts).addTo(linkLayer);
+
+            // Always-visible traffic label at midpoint — only if bps > 0 and link
+            // is long enough on screen (>50 px) to avoid overlap on short links.
+            if (link.in_bps > 0) {
+                var fromPx   = map.latLngToContainerPoint(from);
+                var toPx     = map.latLngToContainerPoint(to);
+                var pixelLen = Math.sqrt(Math.pow(fromPx.x - toPx.x, 2) + Math.pow(fromPx.y - toPx.y, 2));
+                if (pixelLen > 50) {
+                    var midLat  = (from[0] + to[0]) / 2;
+                    var midLng  = (from[1] + to[1]) / 2;
+                    var lblHtml = '\u2193' + formatSpeedCompact(link.in_bps) + ' \u2191' + formatSpeedCompact(link.out_bps);
+                    var icon    = L.divIcon({
+                        className: '',
+                        html: '<div class="netmap-link-label">' + lblHtml + '</div>',
+                        iconAnchor: [0, 0]
+                    });
+                    L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                }
+            }
         });
 
         // Render device circles and labels

@@ -7,7 +7,7 @@ require_once __DIR__ . '/includes/db.php';
 $refresh_interval = (int) netmap_get_setting('refresh_interval', 60);
 $map_provider     = netmap_get_setting('map_provider', 'osm');
 $google_api_key   = netmap_get_setting('google_api_key', '');
-$zoom_threshold   = (int) netmap_get_setting('zoom_threshold_cluster', 13);
+$zoom_threshold   = (int) netmap_get_setting('zoom_threshold_cluster', 17);
 
 ?>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css"

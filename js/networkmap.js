@@ -547,8 +547,13 @@
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);
 
-            // Always-visible traffic label at the link midpoint (individual view only)
-            if (link.in_bps > 0 && map.getZoom() >= 12) {
+            // Always-visible traffic label at the link midpoint (individual view only).
+            // Only render if in_bps > 0, not zoomed out too far, and the link is long
+            // enough on screen (>50 px) so labels don't overlap on short links.
+            const fromPx   = map.latLngToContainerPoint(from);
+            const toPx     = map.latLngToContainerPoint(to);
+            const pixelLen = Math.hypot(fromPx.x - toPx.x, fromPx.y - toPx.y);
+            if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 50) {
                 const midLat = (from.lat + to.lat) / 2;
                 const midLng = (from.lng + to.lng) / 2;
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
