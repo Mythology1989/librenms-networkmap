@@ -31,7 +31,7 @@ INSERT IGNORE INTO `plugin_networkmap_settings` (`key`, `value`) VALUES
   ('map_provider',            'osm'),
   ('google_api_key',          ''),
   ('refresh_interval',        '60'),
-  ('zoom_threshold_cluster',  '17'),
+  ('zoom_threshold_cluster',  '18'),
   ('default_zoom',            'auto'),
   ('tv_token',                '');
 

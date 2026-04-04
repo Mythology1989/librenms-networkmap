@@ -9,7 +9,7 @@ if (! auth()->check() || ! auth()->user()->hasRole('admin')) {
 // Load current settings
 $setting_map_provider      = netmap_get_setting('map_provider',           'osm');
 $setting_refresh_interval  = (int) netmap_get_setting('refresh_interval', 60);
-$setting_zoom_threshold    = (int) netmap_get_setting('zoom_threshold_cluster', 17);
+$setting_zoom_threshold    = (int) netmap_get_setting('zoom_threshold_cluster', 18);
 $setting_tv_token          = netmap_get_setting('tv_token', '');
 $excluded_json             = netmap_get_setting('excluded_locations', '[]');
 $excluded_ids              = json_decode($excluded_json, true);

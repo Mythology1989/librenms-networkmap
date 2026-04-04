@@ -204,12 +204,12 @@ html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
 }
 
 .netmap-link-label {
-    font-size: 10px;
+    font-size: 13px;
     font-weight: bold;
     color: #fff;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.85);
     border-radius: 3px;
-    padding: 1px 4px;
+    padding: 3px 6px;
     white-space: nowrap;
     pointer-events: none;
     transform: translate(-50%, -50%);
@@ -321,6 +321,17 @@ if (typeof L === 'undefined') {
         var deviceCoords = {};
         devices.forEach(function (d) { deviceCoords[d.id] = [d.lat, d.lng]; });
 
+        // Pre-pass: for each canonical device pair, keep the link with highest in_bps.
+        var bestLabelLink = {};
+        links.forEach(function (link) {
+            if (!link.in_bps || link.in_bps <= 0) { return; }
+            var a = link.local_device_id, b = link.remote_device_id;
+            var pairKey = Math.min(a, b) + '-' + Math.max(a, b);
+            if (!bestLabelLink[pairKey] || link.in_bps > bestLabelLink[pairKey].in_bps) {
+                bestLabelLink[pairKey] = link;
+            }
+        });
+
         // Draw link polylines (below devices)
         links.forEach(function (link) {
             var from = deviceCoords[link.local_device_id];
@@ -335,22 +346,26 @@ if (typeof L === 'undefined') {
             if (link.type === 'manual') { opts.dashArray = '6, 4'; }
             L.polyline([from, to], opts).addTo(linkLayer);
 
-            // Always-visible traffic label at midpoint — only if bps > 0 and link
-            // is long enough on screen (>50 px) to avoid overlap on short links.
+            // Always-visible traffic label at midpoint — only if bps > 0, link is
+            // long enough (>100 px) and this link has the highest in_bps for this pair.
             if (link.in_bps > 0) {
-                var fromPx   = map.latLngToContainerPoint(from);
-                var toPx     = map.latLngToContainerPoint(to);
-                var pixelLen = Math.sqrt(Math.pow(fromPx.x - toPx.x, 2) + Math.pow(fromPx.y - toPx.y, 2));
-                if (pixelLen > 50) {
-                    var midLat  = (from[0] + to[0]) / 2;
-                    var midLng  = (from[1] + to[1]) / 2;
-                    var lblHtml = '\u2193' + formatSpeedCompact(link.in_bps) + ' \u2191' + formatSpeedCompact(link.out_bps);
-                    var icon    = L.divIcon({
-                        className: '',
-                        html: '<div class="netmap-link-label">' + lblHtml + '</div>',
-                        iconAnchor: [0, 0]
-                    });
-                    L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                var a2 = link.local_device_id, b2 = link.remote_device_id;
+                var pairKey = Math.min(a2, b2) + '-' + Math.max(a2, b2);
+                if (bestLabelLink[pairKey] === link) {
+                    var fromPx   = map.latLngToContainerPoint(from);
+                    var toPx     = map.latLngToContainerPoint(to);
+                    var pixelLen = Math.sqrt(Math.pow(fromPx.x - toPx.x, 2) + Math.pow(fromPx.y - toPx.y, 2));
+                    if (pixelLen > 100) {
+                        var midLat  = (from[0] + to[0]) / 2;
+                        var midLng  = (from[1] + to[1]) / 2;
+                        var lblHtml = '\u2193' + formatSpeedCompact(link.in_bps) + ' \u2191' + formatSpeedCompact(link.out_bps);
+                        var icon    = L.divIcon({
+                            className: '',
+                            html: '<div class="netmap-link-label">' + lblHtml + '</div>',
+                            iconAnchor: [0, 0]
+                        });
+                        L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                    }
                 }
             }
         });

@@ -44,12 +44,12 @@
 /* ── Always-visible traffic label on link midpoint ─────────────────────── */
 
 .netmap-link-label {
-    font-size: 10px;
+    font-size: 13px;
     font-weight: bold;
     color: #fff;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.85);
     border-radius: 3px;
-    padding: 1px 4px;
+    padding: 3px 6px;
     white-space: nowrap;
     pointer-events: none;
     transform: translate(-50%, -50%);

@@ -506,6 +506,18 @@
             L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
         });
 
+        // Pre-pass: for each canonical device pair, keep the link with highest in_bps.
+        // This prevents label overlap when multiple LLDP links run between the same two devices.
+        const bestLabelLink = {};
+        links.forEach(function (link) {
+            if (!link.in_bps || link.in_bps <= 0) { return; }
+            const a = link.local_device_id, b = link.remote_device_id;
+            const pairKey = Math.min(a, b) + '-' + Math.max(a, b);
+            if (!bestLabelLink[pairKey] || link.in_bps > bestLabelLink[pairKey].in_bps) {
+                bestLabelLink[pairKey] = link;
+            }
+        });
+
         // Render link polylines
         links.forEach(function (link) {
             const from = deviceCoords[link.local_device_id];
@@ -548,12 +560,15 @@
             line.addTo(linkLayer);
 
             // Always-visible traffic label at the link midpoint (individual view only).
-            // Only render if in_bps > 0, not zoomed out too far, and the link is long
-            // enough on screen (>50 px) so labels don't overlap on short links.
+            // Only render if: in_bps > 0, zoom >= 12, pixel length > 100px, and this
+            // link has the highest in_bps for this device pair (prevents overlap on
+            // parallel links between the same two devices).
             const fromPx   = map.latLngToContainerPoint(from);
             const toPx     = map.latLngToContainerPoint(to);
             const pixelLen = Math.hypot(fromPx.x - toPx.x, fromPx.y - toPx.y);
-            if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 50) {
+            const pairKey  = Math.min(link.local_device_id, link.remote_device_id) + '-' +
+                             Math.max(link.local_device_id, link.remote_device_id);
+            if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100 && bestLabelLink[pairKey] === link) {
                 const midLat = (from.lat + to.lat) / 2;
                 const midLng = (from.lng + to.lng) / 2;
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
