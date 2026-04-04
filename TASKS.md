@@ -4,7 +4,7 @@
 > con estado y tráfico en tiempo real de todos los dispositivos monitorizados.
 
 ## Estado: v1.0 COMPLETADA — TODAS LAS FASES
-Última actualización: 2026-04-03
+Última actualización: 2026-04-04
 
 ---
 
@@ -56,7 +56,7 @@
 - [x] Token TV para acceso sin login (generado server-side) (2026-04-03)
 - [x] Panel de configuración: proveedor de mapa, intervalo, zoom de clustering, token TV (2026-04-03)
 - [x] Gestión de enlaces manuales: CRUD en panel de configuración (2026-04-03)
-- [ ] Soporte Google Maps (condicional: solo si API key configurada)
+- [x] Soporte Google Maps (condicional: solo si API key configurada) (2026-04-04)
 
 ## Mejoras v1.0 (2026-04-03)
 
@@ -74,6 +74,29 @@
 - [x] `README.md` con instrucciones de instalación paso a paso (2026-04-03)
 - [x] Verificar todos los criterios de éxito definidos en `SPEC.md` (2026-04-03)
 - [ ] Primer commit público en GitHub bajo cuenta/organización FibraT
+
+## Fase 6: Tráfico simétrico + filtro de enlaces + nombres personalizados (2026-04-03)
+
+- [x] `api/links.php` — devuelve `in_bps` y `out_bps` separados (simétrico) (2026-04-03)
+- [x] `js/networkmap.js` — popup de enlace muestra ↓ in y ↑ out individualmente (2026-04-03)
+- [x] Panel settings: tabla de enlaces con filtro por hostname/puerto, botón ocultar/mostrar por enlace (2026-04-03)
+- [x] `plugin_networkmap_links` — campo `hidden` para ocultar enlaces individuales (2026-04-03)
+- [x] `api/links.php` — filtra hidden_links de la respuesta según setting (2026-04-03)
+- [x] Panel settings: tabla de nombres con campo `map_label` por dispositivo (2026-04-03)
+- [x] `plugin_networkmap_device_labels` — nueva tabla para nombres personalizados (2026-04-03)
+- [x] `api/devices.php` — JOIN a device_labels, devuelve `map_label` (2026-04-03)
+- [x] `js/networkmap.js` — usa `map_label` > `display` > `sysName` > `hostname` (2026-04-03)
+- [x] `tv.php` — usa `map_label`, respeta `hidden_links` (2026-04-03)
+
+## Fase 7: Paridad TV, tablas ordenables, Google Maps (2026-04-04)
+
+- [x] `tv.php` — `bestLabelLink` prepass usa `link_priorities` (prioridad > in_bps) (2026-04-04)
+- [x] `config.php` — tablas de enlaces, nombres y locations ordenables por columna (JS puro) (2026-04-04)
+- [x] `config.php` — campo API key de Google Maps (aparece/oculta según proveedor) (2026-04-04)
+- [x] `api/settings.php` — guarda `google_api_key` (ya estaba en allowed_keys) (2026-04-04)
+- [x] `js/networkmap.js` — carga Google Maps JS API + Leaflet.GoogleMutant si provider=google + key (2026-04-04)
+- [x] `js/networkmap.js` — fallback a OSM con aviso si provider=google pero sin key (2026-04-04)
+- [x] Verificado en producción: mapa OSM funciona, settings guardan, TV paridad ✓ (2026-04-04)
 
 ---
 
@@ -98,3 +121,15 @@
 - `js/networkmap.js` — lógica completa: OSM tiles, CircleMarker por estado (verde/naranja/rojo/gris),
   DivIcon labels siempre visibles, popups de nodo y enlace, polylines LLDP/manual con color por estado,
   tooltips en hover, Promise.all para fetch paralelo, fitBounds en primera carga, auto-refresh y botón manual
+
+### Fase 6 (2026-04-03)
+- `api/links.php` — in_bps/out_bps simétrico, filtra hidden_links del setting
+- `api/devices.php` — JOIN a plugin_networkmap_device_labels, devuelve map_label
+- `plugin_networkmap_device_labels` — nueva tabla, migración aplicada en producción
+- `config.php` — tabla de enlaces con filtro + ocultar/mostrar individual, tabla de nombres con map_label
+- `tv.php` — aplica hidden_links y map_label server-side
+
+### Fase 7 (2026-04-04)
+- `tv.php` — bestLabelLink prepass respeta link_priorities (prioridad < = mejor)
+- `config.php` — makeTableSortable() puro JS para 3 tablas; campo google_api_key condicional
+- `js/networkmap.js` — provider-aware tile loading: Google Maps + Mutant async, deferStart flag, OSM fallback
