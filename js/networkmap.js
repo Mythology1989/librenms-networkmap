@@ -14,6 +14,24 @@
 (function () {
     'use strict';
 
+    // ── Guard: config and Leaflet must be present ────────────────────────
+    if (!window.netmapConfig) {
+        var loadingGuard = document.getElementById('netmap-loading');
+        if (loadingGuard) {
+            loadingGuard.textContent = 'Error: configuración del mapa no disponible. Recarga la página.';
+            loadingGuard.classList.add('visible');
+        }
+        return;
+    }
+    if (typeof L === 'undefined') {
+        var loadingGuardL = document.getElementById('netmap-loading');
+        if (loadingGuardL) {
+            loadingGuardL.textContent = 'Error: Leaflet no pudo cargarse. Comprueba la conexión y recarga.';
+            loadingGuardL.classList.add('visible');
+        }
+        return;
+    }
+
     const config = window.netmapConfig;
 
     // ── DOM references ───────────────────────────────────────────────────
@@ -21,28 +39,38 @@
     const refreshBtn = document.getElementById('netmap-refresh');
 
     // ── Leaflet map ──────────────────────────────────────────────────────
-    const map = L.map('netmap', {
-        minZoom: 2,
-        maxZoom: 18,
-        zoomControl: true
-    }).setView([28.1, -15.4], 8); // fitBounds will override on first load
+    let map;
+    try {
+        map = L.map('netmap', {
+            minZoom: 2,
+            maxZoom: 18,
+            zoomControl: true
+        }).setView([28.1, -15.4], 8); // fitBounds will override on first load
+    } catch (e) {
+        if (loadingEl) {
+            loadingEl.textContent = 'Error inicializando el mapa: ' + e.message;
+            loadingEl.classList.add('visible');
+        }
+        return;
+    }
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         maxZoom: 18
     }).addTo(map);
 
-    // Layer groups — order matters: links bottom, devices middle, labels top
-    let linkLayer   = L.layerGroup().addTo(map);
-    let deviceLayer = L.layerGroup().addTo(map);
-    let labelLayer  = L.layerGroup().addTo(map);
+    // Layer groups — order matters: links bottom, link labels above, devices middle, labels top
+    let linkLayer      = L.layerGroup().addTo(map);
+    let linkLabelLayer = L.layerGroup().addTo(map);
+    let deviceLayer    = L.layerGroup().addTo(map);
+    let labelLayer     = L.layerGroup().addTo(map);
 
     // ── Cached data (populated on each fetch, re-used on zoom changes) ───
     let cachedDevices = [];
     let cachedLinks   = [];
 
     // Geographic proximity grouping threshold in metres
-    const GEO_GROUP_THRESHOLD_M = 50;
+    const GEO_GROUP_THRESHOLD_M = 150;
 
     // ── Formatting helpers ───────────────────────────────────────────────
 
@@ -69,6 +97,14 @@
         if (bps >= 1e6) { return (bps / 1e6).toFixed(1) + ' Mbps'; }
         if (bps >= 1e3) { return (bps / 1e3).toFixed(1) + ' Kbps'; }
         return bps + ' bps';
+    }
+
+    // Compact form for always-visible link labels: "12M", "450K", "1.2G"
+    function formatSpeedCompact(bps) {
+        if (bps >= 1e9) { return (bps / 1e9).toFixed(1) + 'G'; }
+        if (bps >= 1e6) { return (bps / 1e6).toFixed(0) + 'M'; }
+        if (bps >= 1e3) { return (bps / 1e3).toFixed(0) + 'K'; }
+        return bps + 'b';
     }
 
     /**
@@ -284,6 +320,7 @@
      */
     function renderAll() {
         linkLayer.clearLayers();
+        linkLabelLayer.clearLayers();
         deviceLayer.clearLayers();
         labelLayer.clearLayers();
 
@@ -486,10 +523,13 @@
 
             const statusLabel = (link.status || 'unknown').toUpperCase();
             const typeLabel   = link.type === 'manual' ? 'Manual' : 'LLDP';
-            const utilLabel   = (link.utilization_pct > 0)
+            const utilLabel    = (link.utilization_pct > 0)
                 ? ` | ${link.utilization_pct.toFixed(1)}%`
                 : '';
-            const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}<br>${typeLabel} | ${formatSpeed(link.speed_bps)} | ${statusLabel}${utilLabel}`;
+            const trafficLabel = (link.in_bps > 0 || link.out_bps > 0)
+                ? `<br>&#8595;${formatSpeed(link.in_bps)} / &#8593;${formatSpeed(link.out_bps)}`
+                : '';
+            const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}<br>${typeLabel} | ${formatSpeed(link.speed_bps)} | ${statusLabel}${utilLabel}${trafficLabel}`;
             line.bindTooltip(tooltipText, { className: 'netmap-link-tooltip', sticky: true });
 
             const statusClass  = link.status === 'up' ? 'status-up' : 'status-down';
@@ -506,6 +546,19 @@
 
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);
+
+            // Always-visible traffic label at the link midpoint (individual view only)
+            if (link.in_bps > 0 && map.getZoom() >= 12) {
+                const midLat = (from.lat + to.lat) / 2;
+                const midLng = (from.lng + to.lng) / 2;
+                const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
+                const icon = L.divIcon({
+                    className: '',
+                    html: `<div class="netmap-link-label">${labelHtml}</div>`,
+                    iconAnchor: [0, 0]
+                });
+                L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+            }
         });
     }
 
@@ -546,7 +599,7 @@
                 const bounds = L.latLngBounds(
                     cachedDevices.map(function (d) { return [d.lat, d.lng]; })
                 );
-                map.fitBounds(bounds, { padding: [40, 40] });
+                map.fitBounds(bounds, { padding: [40, 40], maxZoom: config.zoomThreshold - 1 });
                 isFirstLoad = false;
             }
         } catch (err) {

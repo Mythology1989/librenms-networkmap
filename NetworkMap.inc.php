@@ -21,6 +21,8 @@ if ($api !== '') {
     }
 } elseif ($view === 'tv') {
     require __DIR__ . '/tv.php';
+} elseif ($view === 'settings') {
+    require __DIR__ . '/config.php';
 } else {
     require __DIR__ . '/map.php';
 }

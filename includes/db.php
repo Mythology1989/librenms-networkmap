@@ -30,7 +30,9 @@ function netmap_set_setting(string $key, string $value): void
 function netmap_get_port_cache(int $port_id): ?array
 {
     $row = dbFetchRow(
-        'SELECT * FROM `plugin_networkmap_port_cache` WHERE `port_id` = ?',
+        'SELECT port_id, in_octets, out_octets, in_bps, out_bps,
+                UNIX_TIMESTAMP(updated_at) AS updated_ts
+         FROM `plugin_networkmap_port_cache` WHERE `port_id` = ?',
         [$port_id]
     );
 
@@ -88,7 +90,7 @@ function netmap_calc_bps(int $port_id, int $in_octets, int $out_octets): array
             return [(int) $cache['in_bps'], (int) $cache['out_bps']];
         }
 
-        $elapsed = time() - strtotime($cache['updated_at']);
+        $elapsed = time() - (int) $cache['updated_ts'];
 
         // Only calculate if time has elapsed and no counter wrap detected
         if ($elapsed > 0 && $in_octets >= $prev_in && $out_octets >= $prev_out) {

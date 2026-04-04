@@ -1,0 +1,173 @@
+/*
+ * NetworkMap plugin styles
+ * Compatible with LibreNMS Bootstrap 3/4 layout
+ *
+ * Node status color convention (set programmatically in networkmap.js):
+ *   UP, no alerts : #2ecc71  (green)
+ *   UP, with alerts: #f39c12  (orange)
+ *   DOWN           : #e74c3c  (red)
+ *   Unknown        : #95a5a6  (grey)
+ */
+
+/* ── Map container ─────────────────────────────────────────────────────── */
+
+#netmap-container {
+    position: relative;
+    width: 100%;
+    height: calc(100vh - 150px);
+    min-height: 400px;
+}
+
+#netmap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* ── Always-visible device labels (Leaflet DivIcon) ────────────────────── */
+
+.netmap-label {
+    font-size: 11px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow:
+        -1px -1px 0 #333,
+         1px -1px 0 #333,
+        -1px  1px 0 #333,
+         1px  1px 0 #333;
+    text-align: center;
+    white-space: nowrap;
+    pointer-events: none;
+    margin-top: 4px;
+}
+
+/* ── Always-visible traffic label on link midpoint ─────────────────────── */
+
+.netmap-link-label {
+    font-size: 10px;
+    font-weight: bold;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: 3px;
+    padding: 1px 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    display: inline-block;
+}
+
+/* ── Link tooltip (shown on polyline hover) ────────────────────────────── */
+
+.netmap-link-tooltip {
+    background: rgba(30, 30, 30, 0.88);
+    color: #fff;
+    border-radius: 4px;
+    font-size: 11px;
+    padding: 4px 8px;
+    max-width: 220px;
+    white-space: nowrap;
+    border: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.netmap-link-tooltip::before {
+    display: none;
+}
+
+/* ── Device popup ───────────────────────────────────────────────────────── */
+
+.netmap-popup .leaflet-popup-content-wrapper {
+    max-width: 280px;
+    padding: 0;
+    border-radius: 6px;
+}
+
+.netmap-popup .leaflet-popup-content {
+    margin: 12px 14px;
+    min-width: 200px;
+}
+
+.netmap-popup h4 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.netmap-popup .status-up {
+    color: #27ae60;
+    font-weight: 600;
+}
+
+.netmap-popup .status-down {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.netmap-popup a {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #337ab7;
+    text-decoration: none;
+}
+
+.netmap-popup a:hover {
+    text-decoration: underline;
+}
+
+/* ── Loading overlay ────────────────────────────────────────────────────── */
+
+#netmap-loading {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+
+#netmap-loading.visible {
+    display: flex;
+}
+
+/* ── Toolbar (top-right inside map) ─────────────────────────────────────── */
+
+.netmap-toolbar {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.netmap-toolbar .btn {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1.4;
+    color: #333;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+}
+
+.netmap-toolbar .btn:hover {
+    background: #f4f4f4;
+    border-color: #aaa;
+    color: #111;
+    text-decoration: none;
+}

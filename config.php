@@ -9,7 +9,7 @@ if (! auth()->check() || ! auth()->user()->hasRole('admin')) {
 // Load current settings
 $setting_map_provider      = netmap_get_setting('map_provider',           'osm');
 $setting_refresh_interval  = (int) netmap_get_setting('refresh_interval', 60);
-$setting_zoom_threshold    = (int) netmap_get_setting('zoom_threshold_cluster', 13);
+$setting_zoom_threshold    = (int) netmap_get_setting('zoom_threshold_cluster', 15);
 $setting_tv_token          = netmap_get_setting('tv_token', '');
 $excluded_json             = netmap_get_setting('excluded_locations', '[]');
 $excluded_ids              = json_decode($excluded_json, true);
@@ -237,6 +237,11 @@ if ($locations_list === false) { $locations_list = []; }
     var API_SETTINGS = '/plugin/v1/NetworkMap?api=settings';
     var API_LINKS    = '/plugin/v1/NetworkMap?api=links';
 
+    function getCsrfToken() {
+        var match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
     // ── Settings form ────────────────────────────────────────────────────
 
     document.getElementById('netmap-settings-form').addEventListener('submit', function(e) {
@@ -255,7 +260,7 @@ if ($locations_list === false) { $locations_list = []; }
             return fetch(API_SETTINGS, {
                 method: 'POST',
                 credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
                 body: JSON.stringify({ key: key, value: settings[key] })
             });
         });
@@ -279,7 +284,7 @@ if ($locations_list === false) { $locations_list = []; }
         fetch(API_SETTINGS, {
             method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
             body: JSON.stringify({ action: 'regenerate_tv_token' })
         })
         .then(function(r) { return r.json(); })
@@ -300,7 +305,8 @@ if ($locations_list === false) { $locations_list = []; }
         if (!id || !confirm('¿Eliminar enlace #' + id + '?')) { return; }
         fetch(API_LINKS + '&id=' + encodeURIComponent(id), {
             method: 'DELETE',
-            credentials: 'same-origin'
+            credentials: 'same-origin',
+            headers: { 'X-XSRF-TOKEN': getCsrfToken() }
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -325,7 +331,7 @@ if ($locations_list === false) { $locations_list = []; }
         fetch(API_SETTINGS, {
             method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
             body: JSON.stringify({ key: 'excluded_locations', value: JSON.stringify(ids) })
         })
         .then(function(r) { return r.json(); })
@@ -367,7 +373,7 @@ if ($locations_list === false) { $locations_list = []; }
         fetch(API_LINKS, {
             method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
             body: JSON.stringify(body)
         })
         .then(function(r) { return r.json(); })
