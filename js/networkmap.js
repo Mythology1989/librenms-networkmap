@@ -645,6 +645,10 @@
                     cachedDevices.map(function (d) { return [d.lat, d.lng]; })
                 );
                 map.fitBounds(bounds, { padding: [40, 40], maxZoom: config.zoomThreshold - 1 });
+                map.setMinZoom(10);
+                map.once('moveend', function () {
+                    if (map.getZoom() < 11) { map.setZoom(12); }
+                });
                 isFirstLoad = false;
             }
         } catch (err) {
