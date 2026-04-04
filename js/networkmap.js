@@ -245,19 +245,22 @@
     }
 
     /**
-     * Aggregate links for grouped rendering.
+     * Aggregate links for grouped rendering using priority-based best-link selection.
      *
      * - Links within the same group (intra-group) are discarded.
-     * - Links between different groups are merged by canonical pair key.
-     *   The aggregated entry tracks worst-case utilization, has_down flag,
-     *   and whether any member is a manual link.
+     * - For each inter-group pair, candidates are sorted by priority (ascending,
+     *   lower number = higher priority) then by in_bps (descending) as tiebreaker.
+     * - The best link's properties (type, status, utilization_pct, bps) are used
+     *   directly for rendering.
+     * - Priorities come from config.linkPriorities: { "lldp_N": 1, "manual_N": 2, … }
      *
      * @param {Array}  links
      * @param {Object} deviceToGroup  — { deviceId: groupId }
      * @returns {Array} aggregated link objects
      */
     function aggregateLinks(links, deviceToGroup) {
-        const agg = {};
+        const lp         = config.linkPriorities || {};
+        const candidates = {};
 
         links.forEach(function (link) {
             const fg = deviceToGroup[link.local_device_id];
@@ -265,36 +268,35 @@
 
             if (!fg || !tg || fg === tg) { return; } // skip intra-group
 
-            // Canonical key: always smaller group string first
             const key = fg < tg ? fg + '_' + tg : tg + '_' + fg;
 
-            const pct = link.utilization_pct || 0;
-
-            if (!agg[key]) {
-                agg[key] = {
-                    from_group:      fg,
-                    to_group:        tg,
-                    max_utilization: pct,
-                    has_down:        link.status === 'down',
-                    has_manual:      link.type   === 'manual',
-                    count:           1,
-                    in_bps:          link.in_bps  || 0,
-                    out_bps:         link.out_bps || 0,
-                    speed_bps:       link.speed_bps || 0,
-                };
-            } else {
-                const a = agg[key];
-                a.max_utilization = Math.max(a.max_utilization, pct);
-                if (link.status === 'down')   { a.has_down   = true; }
-                if (link.type   === 'manual') { a.has_manual = true; }
-                a.count++;
-                a.in_bps    = Math.max(a.in_bps,    link.in_bps  || 0);
-                a.out_bps   = Math.max(a.out_bps,   link.out_bps || 0);
-                a.speed_bps = Math.max(a.speed_bps, link.speed_bps || 0);
+            if (!candidates[key]) {
+                candidates[key] = { from_group: fg, to_group: tg, links: [] };
             }
+            candidates[key].links.push(link);
         });
 
-        return Object.values(agg);
+        return Object.values(candidates).map(function (c) {
+            // Sort by priority asc, then in_bps desc
+            c.links.sort(function (a, b) {
+                const pa = (lp[a.id] !== undefined) ? lp[a.id] : 999;
+                const pb = (lp[b.id] !== undefined) ? lp[b.id] : 999;
+                if (pa !== pb) { return pa - pb; }
+                return (b.in_bps || 0) - (a.in_bps || 0);
+            });
+            const best = c.links[0];
+            return {
+                from_group:      c.from_group,
+                to_group:        c.to_group,
+                count:           c.links.length,
+                type:            best.type,
+                status:          best.status,
+                utilization_pct: best.utilization_pct || 0,
+                in_bps:          best.in_bps   || 0,
+                out_bps:         best.out_bps  || 0,
+                speed_bps:       best.speed_bps || 0,
+            };
+        });
     }
 
     // ── Loading overlay ──────────────────────────────────────────────────
@@ -413,25 +415,17 @@
             const to   = coordMap[a.to_group];
             if (!from || !to) { return; }
 
-            // Synthesize a link-like object for linkColor
-            // Manual-only groups get blue; if any member is down → red wins
-            const synthLink = {
-                type:            (a.has_manual && !a.has_down) ? 'manual' : 'lldp',
-                status:          a.has_down ? 'down' : 'up',
-                utilization_pct: a.max_utilization,
-            };
-
             const opts = {
-                color:   linkColor(synthLink),
-                weight:  linkWeight(a.max_utilization),
+                color:   linkColor(a),
+                weight:  linkWeight(a.utilization_pct),
                 opacity: 0.7
             };
-            if (a.has_manual) { opts.dashArray = '6, 4'; }
+            if (a.type === 'manual') { opts.dashArray = '6, 4'; }
 
             const line = L.polyline([from, to], opts);
 
-            const typeLabel = a.has_manual ? 'Manual' : 'LLDP';
-            const tooltip   = `${a.count} enlace${a.count > 1 ? 's' : ''} | ${typeLabel} | ${synthLink.status.toUpperCase()} | ${a.max_utilization.toFixed(1)}%`;
+            const typeLabel = a.type === 'manual' ? 'Manual' : 'LLDP';
+            const tooltip   = `${a.count} enlace${a.count > 1 ? 's' : ''} | ${typeLabel} | ${a.status.toUpperCase()} | ${a.utilization_pct.toFixed(1)}%`;
             line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
             line.addTo(linkLayer);
 
@@ -561,7 +555,7 @@
                 ? ` | ${link.utilization_pct.toFixed(1)}%`
                 : '';
             const trafficLabel = (link.in_bps > 0 || link.out_bps > 0)
-                ? `<br>&#8595;${formatSpeed(link.in_bps)} / &#8593;${formatSpeed(link.out_bps)}`
+                ? `<br>Rx &#8595;${formatSpeed(link.in_bps)} / Tx &#8593;${formatSpeed(link.out_bps)}`
                 : '';
             const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}<br>${typeLabel} | ${formatSpeed(link.speed_bps)} | ${statusLabel}${utilLabel}${trafficLabel}`;
             line.bindTooltip(tooltipText, { className: 'netmap-link-tooltip', sticky: true });

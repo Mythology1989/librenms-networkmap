@@ -20,13 +20,30 @@ $hidden_links_json         = netmap_get_setting('hidden_links', '[]');
 $hidden_links_arr          = json_decode($hidden_links_json, true);
 if (!is_array($hidden_links_arr)) { $hidden_links_arr = []; }
 
+$link_priorities_json      = netmap_get_setting('link_priorities', '{}');
+$link_priorities_arr       = json_decode($link_priorities_json, true);
+if (!is_array($link_priorities_arr)) { $link_priorities_arr = []; }
+
+// Auto-init: on first load, hide all LLDP links (user enables what they want)
+$links_filter_initialized  = netmap_get_setting('links_filter_initialized', '0');
+if ($links_filter_initialized === '0') {
+    if (empty($hidden_links_arr)) {
+        $all_lldp_ids = dbFetchRows('SELECT id FROM links WHERE remote_device_id IS NOT NULL', []);
+        if (is_array($all_lldp_ids)) {
+            $hidden_links_arr = array_map(function ($r) { return 'lldp_' . (int) $r['id']; }, $all_lldp_ids);
+            netmap_set_setting('hidden_links', json_encode($hidden_links_arr));
+        }
+    }
+    netmap_set_setting('links_filter_initialized', '1');
+}
+
 // Auto-generate TV token if missing
 if ($setting_tv_token === '' || $setting_tv_token === null) {
     $setting_tv_token = bin2hex(random_bytes(16));
     netmap_set_setting('tv_token', $setting_tv_token);
 }
 
-// Load all devices for manual link form (device_id + display name)
+// Load all devices (for manual link form + label editor)
 $all_devices = dbFetchRows('
     SELECT d.device_id,
            COALESCE(d.display, d.sysName, d.hostname) AS display_name
@@ -34,6 +51,14 @@ $all_devices = dbFetchRows('
     ORDER BY display_name ASC
 ', []);
 if ($all_devices === false) { $all_devices = []; }
+
+// Load existing device labels
+$device_labels_rows = dbFetchRows('SELECT device_id, map_label FROM plugin_networkmap_device_labels', []);
+if ($device_labels_rows === false) { $device_labels_rows = []; }
+$device_labels_map  = [];
+foreach ($device_labels_rows as $dlr) {
+    $device_labels_map[(int) $dlr['device_id']] = $dlr['map_label'];
+}
 
 // Load existing manual links with device names
 $manual_links = dbFetchRows('
@@ -198,11 +223,15 @@ if ($locations_list === false) { $locations_list = []; }
     </p>
     <div id="nm-lf-loading" class="text-muted">Cargando enlaces…</div>
     <form id="nm-links-filter-form" style="display:none;">
+      <div style="margin-bottom:8px;">
+        <button type="button" class="btn btn-default btn-xs" id="nm-lf-enable-all">Activar todos</button>
+        <button type="button" class="btn btn-default btn-xs" id="nm-lf-disable-all" style="margin-left:4px;">Desactivar todos</button>
+      </div>
       <table class="table table-condensed table-bordered" style="margin-bottom:10px;">
         <thead>
           <tr>
             <th>ID</th><th>Origen</th><th>Destino</th><th>Puerto local</th>
-            <th>Velocidad</th><th>Tráfico (↓&nbsp;/&nbsp;↑)</th><th>Mostrar</th>
+            <th>Velocidad</th><th>Tráfico (↓&nbsp;/&nbsp;↑)</th><th>Prioridad</th><th>Mostrar</th>
           </tr>
         </thead>
         <tbody id="nm-lf-tbody"></tbody>
@@ -210,6 +239,44 @@ if ($locations_list === false) { $locations_list = []; }
       <button type="submit" class="btn btn-warning">Guardar filtro de enlaces</button>
       <span id="nm-lf-msg" style="margin-left:10px;display:none;"></span>
     </form>
+  </div>
+</div>
+
+<div class="panel panel-default">
+  <div class="panel-heading"><h3 class="panel-title">Nombres en el mapa</h3></div>
+  <div class="panel-body">
+    <p class="text-muted" style="margin-bottom:10px;">
+      Nombre personalizado que aparece en el mapa para cada dispositivo.
+      Deja el campo vacío para usar el nombre por defecto (<code>display → sysName → hostname</code>).
+    </p>
+    <table class="table table-condensed table-bordered">
+      <thead>
+        <tr><th>Dispositivo</th><th>Nombre en el mapa</th><th></th></tr>
+      </thead>
+      <tbody>
+        <?php if (empty($all_devices)): ?>
+        <tr><td colspan="3" class="text-muted text-center">No hay dispositivos con coordenadas.</td></tr>
+        <?php else: ?>
+        <?php foreach ($all_devices as $d): ?>
+        <tr>
+          <td><?= htmlspecialchars($d['display_name'], ENT_QUOTES, 'UTF-8') ?></td>
+          <td>
+            <input type="text" class="form-control input-sm nm-label-input"
+                   data-device-id="<?= (int) $d['device_id'] ?>"
+                   value="<?= htmlspecialchars($device_labels_map[(int)$d['device_id']] ?? '', ENT_QUOTES, 'UTF-8') ?>"
+                   maxlength="255" placeholder="<?= htmlspecialchars($d['display_name'], ENT_QUOTES, 'UTF-8') ?>">
+          </td>
+          <td>
+            <button type="button" class="btn btn-primary btn-xs nm-save-label"
+                    data-device-id="<?= (int) $d['device_id'] ?>">Guardar</button>
+            <span class="nm-label-msg" data-device-id="<?= (int) $d['device_id'] ?>"
+                  style="margin-left:6px;display:none;"></span>
+          </td>
+        </tr>
+        <?php endforeach; ?>
+        <?php endif; ?>
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -264,6 +331,9 @@ if ($locations_list === false) { $locations_list = []; }
     var API_SETTINGS = '/plugin/v1/NetworkMap?api=settings';
     var API_LINKS    = '/plugin/v1/NetworkMap?api=links';
     var API_DEVICES  = '/plugin/v1/NetworkMap?api=devices';
+    var API_LABELS   = '/plugin/v1/NetworkMap?api=labels';
+
+    var linkPrioritiesObj = <?= json_encode($link_priorities_arr) ?>;
 
     function escapeHtml(str) {
         if (str == null) { return ''; }
@@ -299,14 +369,24 @@ if ($locations_list === false) { $locations_list = []; }
                 devMap[d.id] = d.display_name || ('device_' + d.id);
             });
             var links = results[1].links || [];
+
+            // Sort by priority ascending (unset = 999), then by id
+            links.sort(function(a, b) {
+                var pa = (linkPrioritiesObj[a.id] !== undefined) ? linkPrioritiesObj[a.id] : 999;
+                var pb = (linkPrioritiesObj[b.id] !== undefined) ? linkPrioritiesObj[b.id] : 999;
+                if (pa !== pb) { return pa - pb; }
+                return String(a.id).localeCompare(String(b.id));
+            });
+
             var tbody = document.getElementById('nm-lf-tbody');
             tbody.innerHTML = '';
             if (links.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center">No hay enlaces.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="text-muted text-center">No hay enlaces.</td></tr>';
             } else {
                 links.forEach(function(link) {
-                    var isHidden = hiddenLinksArr.indexOf(link.id) !== -1;
-                    var traffic  = (link.in_bps > 0 || link.out_bps > 0)
+                    var isHidden  = hiddenLinksArr.indexOf(link.id) !== -1;
+                    var priority  = (linkPrioritiesObj[link.id] !== undefined) ? linkPrioritiesObj[link.id] : '';
+                    var traffic   = (link.in_bps > 0 || link.out_bps > 0)
                         ? '\u2193' + fmtBps(link.in_bps) + ' / \u2191' + fmtBps(link.out_bps)
                         : '—';
                     var tr = document.createElement('tr');
@@ -317,6 +397,11 @@ if ($locations_list === false) { $locations_list = []; }
                         '<td>' + escapeHtml(link.local_port || '—') + '</td>' +
                         '<td>' + escapeHtml(fmtBps(link.speed_bps)) + '</td>' +
                         '<td>' + escapeHtml(traffic) + '</td>' +
+                        '<td class="text-center">' +
+                          '<input type="number" name="link_priority" min="1" max="99" style="width:60px;"' +
+                          ' data-link-id="' + escapeHtml(link.id) + '"' +
+                          ' value="' + escapeHtml(String(priority)) + '" placeholder="—">' +
+                        '</td>' +
                         '<td class="text-center"><input type="checkbox" name="link_visible"' +
                         ' value="' + escapeHtml(link.id) + '"' + (isHidden ? '' : ' checked') + '></td>';
                     tbody.appendChild(tr);
@@ -329,28 +414,57 @@ if ($locations_list === false) { $locations_list = []; }
         });
     })();
 
+    document.getElementById('nm-lf-enable-all').addEventListener('click', function() {
+        document.querySelectorAll('input[name="link_visible"]').forEach(function(el) { el.checked = true; });
+    });
+
+    document.getElementById('nm-lf-disable-all').addEventListener('click', function() {
+        document.querySelectorAll('input[name="link_visible"]').forEach(function(el) { el.checked = false; });
+    });
+
     document.getElementById('nm-links-filter-form').addEventListener('submit', function(e) {
         e.preventDefault();
         var unchecked = document.querySelectorAll('input[name="link_visible"]:not(:checked)');
-        var hidden = Array.from(unchecked).map(function(el) { return el.value; });
+        var hidden    = Array.from(unchecked).map(function(el) { return el.value; });
+
+        // Collect priorities
+        var priorities = {};
+        document.querySelectorAll('input[name="link_priority"]').forEach(function(el) {
+            var val = el.value.trim();
+            if (val !== '' && !isNaN(parseInt(val, 10))) {
+                priorities[el.getAttribute('data-link-id')] = parseInt(val, 10);
+            }
+        });
+
         var msgEl = document.getElementById('nm-lf-msg');
         msgEl.style.display = '';
         msgEl.textContent = 'Guardando…';
         msgEl.style.color = '#555';
-        fetch(API_SETTINGS, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
-            body: JSON.stringify({ key: 'hidden_links', value: JSON.stringify(hidden) })
+
+        Promise.all([
+            fetch(API_SETTINGS, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
+                body: JSON.stringify({ key: 'hidden_links', value: JSON.stringify(hidden) })
+            }),
+            fetch(API_SETTINGS, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
+                body: JSON.stringify({ key: 'link_priorities', value: JSON.stringify(priorities) })
+            })
+        ])
+        .then(function(responses) {
+            return Promise.all(responses.map(function(r) { return r.json(); }));
         })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.success) {
+        .then(function(results) {
+            var ok = results.every(function(d) { return d.success; });
+            if (ok) {
                 msgEl.textContent = '✓ Filtro guardado';
                 msgEl.style.color = '#27ae60';
-                hiddenLinksArr = hidden;
+                hiddenLinksArr    = hidden;
+                linkPrioritiesObj = priorities;
             } else {
-                msgEl.textContent = '✗ ' + (data.error || 'Error');
+                msgEl.textContent = '✗ ' + (results[0].error || results[1].error || 'Error');
                 msgEl.style.color = '#c0392b';
             }
             setTimeout(function() { msgEl.style.display = 'none'; }, 3000);
@@ -463,6 +577,41 @@ if ($locations_list === false) { $locations_list = []; }
                 msgEl.style.color = '#c0392b';
             }
             setTimeout(function() { msgEl.style.display = 'none'; }, 3000);
+        })
+        .catch(function() {
+            msgEl.textContent = '✗ Error de red';
+            msgEl.style.color = '#c0392b';
+        });
+    });
+
+    // ── Device label save ─────────────────────────────────────────────────
+
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('.nm-save-label');
+        if (!btn) { return; }
+        var deviceId = parseInt(btn.getAttribute('data-device-id'), 10);
+        var input    = document.querySelector('.nm-label-input[data-device-id="' + deviceId + '"]');
+        var msgEl    = document.querySelector('.nm-label-msg[data-device-id="' + deviceId + '"]');
+        if (!input || !msgEl) { return; }
+        var label = input.value.trim();
+        msgEl.style.display = '';
+        msgEl.textContent   = 'Guardando…';
+        msgEl.style.color   = '#555';
+        fetch(API_LABELS, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
+            body: JSON.stringify({ device_id: deviceId, map_label: label })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                msgEl.textContent = '✓';
+                msgEl.style.color = '#27ae60';
+            } else {
+                msgEl.textContent = '✗ ' + (data.error || 'Error');
+                msgEl.style.color = '#c0392b';
+            }
+            setTimeout(function() { msgEl.style.display = 'none'; }, 2500);
         })
         .catch(function() {
             msgEl.textContent = '✗ Error de red';

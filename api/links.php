@@ -23,9 +23,13 @@ if ($method === 'GET') {
             p_local.ifOutOctets,
             p_local.ifSpeed,
             p_local.ifOperStatus,
-            p_local.ifAlias
+            p_local.ifAlias,
+            p_local.ifName,
+            p_remote.ifAlias AS remote_ifAlias,
+            p_remote.ifName  AS remote_ifName
         FROM links l
         JOIN ports p_local ON p_local.port_id = l.local_port_id
+        LEFT JOIN ports p_remote ON p_remote.port_id = l.remote_port_id
         WHERE l.remote_device_id IS NOT NULL
     ');
 
@@ -57,7 +61,12 @@ if ($method === 'GET') {
     $links = [];
 
     foreach ($lldp_rows as $row) {
-        $local_port = !empty($row['ifAlias']) ? $row['ifAlias'] : 'port_' . $row['local_port_id'];
+        $local_port  = !empty($row['ifAlias'])       ? $row['ifAlias']
+                     : (!empty($row['ifName'])        ? $row['ifName']
+                     : 'port_' . (int) $row['local_port_id']);
+        $remote_port = !empty($row['remote_ifAlias']) ? $row['remote_ifAlias']
+                     : (!empty($row['remote_ifName']) ? $row['remote_ifName']
+                     : 'port_' . (int) $row['remote_port_id']);
         $port_id    = (int) $row['local_port_id'];
         $speed      = (int) $row['ifSpeed'];
 
@@ -77,7 +86,7 @@ if ($method === 'GET') {
             'local_device_id'  => (int) $row['local_device_id'],
             'remote_device_id' => (int) $row['remote_device_id'],
             'local_port'       => $local_port,
-            'remote_port'      => 'port_' . (int) $row['remote_port_id'],
+            'remote_port'      => $remote_port,
             'status'           => ($row['ifOperStatus'] === 'up') ? 'up' : 'down',
             'speed_bps'        => $speed,
             'in_bps'           => $in_bps,

@@ -37,7 +37,21 @@ INSERT IGNORE INTO `plugin_networkmap_settings` (`key`, `value`) VALUES
   ('hidden_links',            '[]');
 
 -- ----------------------------------------------------------------------------
--- Table 3: Traffic rate cache (translates SNMP octet counters to bps)
+-- Table 3: Custom map labels per device (overrides display_name on the map)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `plugin_networkmap_device_labels` (
+  `device_id`  INT          PRIMARY KEY,
+  `map_label`  VARCHAR(255) NOT NULL,
+  `updated_at` TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Additional default settings
+INSERT IGNORE INTO `plugin_networkmap_settings` (`key`, `value`) VALUES
+  ('links_filter_initialized', '0'),
+  ('link_priorities',          '{}');
+
+-- ----------------------------------------------------------------------------
+-- Table 4: Traffic rate cache (translates SNMP octet counters to bps)
 -- Updated each polling cycle; one row per monitored port.
 -- bps = (octets_now - octets_prev) * 8 / seconds_elapsed
 -- ----------------------------------------------------------------------------

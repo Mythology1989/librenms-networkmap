@@ -79,6 +79,7 @@ if ($method === 'POST') {
         'default_zoom',
         'excluded_locations',
         'hidden_links',
+        'link_priorities',
     ];
 
     if (! isset($body['key']) || ! isset($body['value'])) {

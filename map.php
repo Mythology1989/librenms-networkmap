@@ -4,13 +4,16 @@
 
 require_once __DIR__ . '/includes/db.php';
 
-$refresh_interval = (int) netmap_get_setting('refresh_interval', 60);
-$map_provider     = netmap_get_setting('map_provider', 'osm');
-$google_api_key   = netmap_get_setting('google_api_key', '');
-$zoom_threshold   = (int) netmap_get_setting('zoom_threshold_cluster', 18);
-$hidden_links_raw = netmap_get_setting('hidden_links', '[]');
-$hidden_links     = json_decode($hidden_links_raw, true);
+$refresh_interval     = (int) netmap_get_setting('refresh_interval', 60);
+$map_provider         = netmap_get_setting('map_provider', 'osm');
+$google_api_key       = netmap_get_setting('google_api_key', '');
+$zoom_threshold       = (int) netmap_get_setting('zoom_threshold_cluster', 18);
+$hidden_links_raw     = netmap_get_setting('hidden_links', '[]');
+$hidden_links         = json_decode($hidden_links_raw, true);
 if (!is_array($hidden_links)) { $hidden_links = []; }
+$link_priorities_raw  = netmap_get_setting('link_priorities', '{}');
+$link_priorities_arr  = json_decode($link_priorities_raw, true);
+if (!is_array($link_priorities_arr)) { $link_priorities_arr = []; }
 
 ?>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css"
@@ -44,7 +47,8 @@ window.netmapConfig = {
     apiDevices:  '/plugin/v1/NetworkMap?api=devices',
     apiLinks:    '/plugin/v1/NetworkMap?api=links',
     apiSettings: '/plugin/v1/NetworkMap?api=settings',
-    hiddenLinks: <?= json_encode($hidden_links) ?>
+    hiddenLinks: <?= json_encode($hidden_links) ?>,
+    linkPriorities: <?= json_encode($link_priorities_arr) ?>
 };
 </script>
 

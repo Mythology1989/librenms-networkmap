@@ -42,10 +42,12 @@ $rows = dbFetchRows('
         d.uptime,
         d.type,
         d.os,
-        COUNT(a.id) AS active_alerts
+        COUNT(a.id) AS active_alerts,
+        ndl.map_label
     FROM devices d
     JOIN locations l ON l.id = d.location_id
     LEFT JOIN alerts a ON a.device_id = d.device_id AND a.state = 1
+    LEFT JOIN plugin_networkmap_device_labels ndl ON ndl.device_id = d.device_id
     WHERE l.lat IS NOT NULL AND l.lng IS NOT NULL' . $exclusion_sql . '
     GROUP BY d.device_id
 ');
@@ -59,9 +61,11 @@ if ($rows === false) {
 $devices = [];
 
 foreach ($rows as $row) {
-    $display_name = !empty($row['display'])
-        ? $row['display']
-        : (!empty($row['sysName']) ? $row['sysName'] : $row['hostname']);
+    $display_name = !empty($row['map_label'])
+        ? $row['map_label']
+        : (!empty($row['display'])
+            ? $row['display']
+            : (!empty($row['sysName']) ? $row['sysName'] : $row['hostname']));
 
     $devices[] = [
         'id'            => (int) $row['device_id'],

@@ -163,6 +163,16 @@ siempre saldrá a 0.
   `typeof L === 'undefined' || typeof L.MarkerClusterGroup === 'undefined'`
   (doble comprobación para evitar TypeError si Leaflet tampoco cargó).
 
+## Nombres de dispositivos en el mapa
+El nombre que se muestra para cada dispositivo sigue esta jerarquía:
+1. `plugin_networkmap_device_labels.map_label` — nombre personalizado por el admin del plugin
+2. `devices.display` — "Display Name" configurable en LibreNMS → device → Edit → Display Name
+3. `devices.sysName` — nombre SNMP del equipo
+4. `devices.hostname` — hostname de gestión
+
+Para cambiar el nombre: ir a la pestaña **Configuración** del plugin → sección "Nombres en el mapa".
+El campo `d.display` se configura en LibreNMS → [dispositivo] → Edit → campo "Display Name".
+
 ## Convenciones
 - Commits: `tipo(scope): mensaje` — feat, fix, chore, docs, refactor
 - PHP: PSR-12 básico. Indentación 4 espacios

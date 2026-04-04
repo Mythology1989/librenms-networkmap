@@ -13,6 +13,9 @@ if ($api !== '') {
         case 'settings':
             require __DIR__ . '/api/settings.php';
             break;
+        case 'labels':
+            require __DIR__ . '/api/labels.php';
+            break;
         default:
             http_response_code(404);
             header('Content-Type: application/json');
