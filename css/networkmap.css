@@ -115,6 +115,23 @@
     text-decoration: underline;
 }
 
+/* ── Zoom level indicator (bottom-left, next to scale control) ──────────── */
+
+#netmap-zoom-indicator {
+    position: absolute;
+    bottom: 30px;
+    left: 10px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-family: monospace;
+    color: #333;
+    pointer-events: none;
+}
+
 /* ── Loading overlay ────────────────────────────────────────────────────── */
 
 #netmap-loading {

@@ -567,8 +567,17 @@
         });
     }
 
+    // ── Scale control + zoom indicator ──────────────────────────────────
+    L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+
+    const zoomIndicatorEl = document.getElementById('netmap-zoom-indicator');
+    function updateZoomIndicator() {
+        if (zoomIndicatorEl) { zoomIndicatorEl.textContent = 'Zoom: ' + map.getZoom(); }
+    }
+    updateZoomIndicator();
+
     // ── Zoom-driven re-render (no re-fetch) ──────────────────────────────
-    map.on('zoomend', renderAll);
+    map.on('zoomend', function () { updateZoomIndicator(); renderAll(); });
 
     // ── Data fetching ────────────────────────────────────────────────────
 

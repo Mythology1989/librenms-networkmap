@@ -29,6 +29,7 @@ document.getElementById('leaflet-css-cdn').addEventListener('error', function() 
         <button class="btn" id="netmap-refresh" title="Actualizar">↺</button>
         <a class="btn" href="/plugin/v1/NetworkMap?view=settings" title="Configuración">⚙</a>
     </div>
+    <div id="netmap-zoom-indicator">Zoom: —</div>
 </div>
 
 <script>
