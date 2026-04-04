@@ -77,6 +77,7 @@ if ($method === 'POST') {
         'refresh_interval',
         'zoom_threshold_cluster',
         'default_zoom',
+        'excluded_locations',
     ];
 
     if (! isset($body['key']) || ! isset($body['value'])) {

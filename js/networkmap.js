@@ -5,8 +5,11 @@
  *   - Leaflet 1.9.4 (loaded before this script)
  *   - window.netmapConfig (set by map.php before this script)
  *
- * Phase 2 scope: OSM tiles, device markers with labels, LLDP/manual link
- * lines, popups, tooltips, auto-refresh.
+ * Features:
+ *   - Geographic proximity clustering via Haversine (<50m → group node)
+ *   - Link colors by type/utilization: green <50%, orange 50-80%, red ≥80%/DOWN, blue dashed manual
+ *   - Always-visible labels; groups show "Name (N)" format
+ *   - Zoom-driven re-render without re-fetching data
  */
 (function () {
     'use strict';
@@ -14,168 +17,435 @@
     const config = window.netmapConfig;
 
     // ── DOM references ───────────────────────────────────────────────────
-    const loadingEl = document.getElementById('netmap-loading');
+    const loadingEl  = document.getElementById('netmap-loading');
     const refreshBtn = document.getElementById('netmap-refresh');
 
-    // ── Leaflet map & layer groups ───────────────────────────────────────
+    // ── Leaflet map ──────────────────────────────────────────────────────
     const map = L.map('netmap', {
         minZoom: 2,
         maxZoom: 18,
         zoomControl: true
-    }).setView([28.1, -15.4], 8); // sensible default; fitBounds will override
+    }).setView([28.1, -15.4], 8); // fitBounds will override on first load
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         maxZoom: 18
     }).addTo(map);
 
-    // Layer groups so we can clear/redraw easily.
-    // Order matters: layers added later render on top.
-    // Links go first (bottom), then device circles, then labels (top).
-    let linkLayer = L.layerGroup().addTo(map);
+    // Layer groups — order matters: links bottom, devices middle, labels top
+    let linkLayer   = L.layerGroup().addTo(map);
     let deviceLayer = L.layerGroup().addTo(map);
-    let labelLayer = L.layerGroup().addTo(map);
+    let labelLayer  = L.layerGroup().addTo(map);
+
+    // ── Cached data (populated on each fetch, re-used on zoom changes) ───
+    let cachedDevices = [];
+    let cachedLinks   = [];
+
+    // Geographic proximity grouping threshold in metres
+    const GEO_GROUP_THRESHOLD_M = 50;
 
     // ── Formatting helpers ───────────────────────────────────────────────
 
     /**
-     * Format an uptime value (in seconds) to a human-readable string.
-     * Returns "Xd Yh Zm" — e.g. 14d 3h 22m, 0d 0h 5m.
-     *
-     * @param {number} seconds - uptime in seconds
+     * Format uptime seconds → "Xd Yh Zm".
+     * @param {number} seconds
      * @returns {string}
      */
     function formatUptime(seconds) {
-        const s = Math.max(0, Math.floor(seconds));
-        const days = Math.floor(s / 86400);
-        const hours = Math.floor((s % 86400) / 3600);
+        const s       = Math.max(0, Math.floor(seconds));
+        const days    = Math.floor(s / 86400);
+        const hours   = Math.floor((s % 86400) / 3600);
         const minutes = Math.floor((s % 3600) / 60);
         return `${days}d ${hours}h ${minutes}m`;
     }
 
     /**
-     * Format a speed in bits-per-second to a human-readable string.
-     * Chooses the most appropriate unit: Gbps, Mbps, or Kbps.
-     *
-     * @param {number} bps - speed in bits per second
+     * Format bits-per-second → human-readable string (Gbps / Mbps / Kbps / bps).
+     * @param {number} bps
      * @returns {string}
      */
     function formatSpeed(bps) {
-        if (bps >= 1e9) {
-            return (bps / 1e9).toFixed(1) + ' Gbps';
-        }
-        if (bps >= 1e6) {
-            return (bps / 1e6).toFixed(1) + ' Mbps';
-        }
-        if (bps >= 1e3) {
-            return (bps / 1e3).toFixed(1) + ' Kbps';
-        }
+        if (bps >= 1e9) { return (bps / 1e9).toFixed(1) + ' Gbps'; }
+        if (bps >= 1e6) { return (bps / 1e6).toFixed(1) + ' Mbps'; }
+        if (bps >= 1e3) { return (bps / 1e3).toFixed(1) + ' Kbps'; }
         return bps + ' bps';
     }
 
     /**
-     * Determine the fill color for a device node based on its operational
-     * status and active alert count.
+     * Minimal HTML escaping to prevent XSS.
+     * @param {string} str
+     * @returns {string}
+     */
+    function escapeHtml(str) {
+        if (str == null) { return ''; }
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // ── Color helpers ────────────────────────────────────────────────────
+
+    /**
+     * Device node fill color based on status and active alerts.
      *
-     * Color logic:
-     *   - status 1, no alerts  -> green  (#2ecc71)  — healthy
-     *   - status 1, alerts > 0 -> orange (#f39c12)  — up but degraded
-     *   - status 0             -> red    (#e74c3c)  — down
-     *   - anything else        -> grey   (#95a5a6)  — unknown / unmonitored
-     *
-     * @param {object} device - device object from the API
+     * @param {object} device
      * @returns {string} hex color
      */
     function deviceColor(device) {
-        if (device.status === 1 && device.active_alerts === 0) {
-            return '#2ecc71';
-        }
-        if (device.status === 1 && device.active_alerts > 0) {
-            return '#f39c12';
-        }
-        if (device.status === 0) {
-            return '#e74c3c';
-        }
+        if (device.status === 1 && device.active_alerts === 0) { return '#2ecc71'; }
+        if (device.status === 1 && device.active_alerts > 0)   { return '#f39c12'; }
+        if (device.status === 0)                                { return '#e74c3c'; }
         return '#95a5a6';
     }
 
     /**
-     * Determine the color for a link line based on its status.
+     * Link line color by type, status and utilization:
+     *   - manual               → blue   (#3498db)
+     *   - status 'down'        → red    (#e74c3c)
+     *   - utilization ≥ 80%    → red    (#e74c3c)
+     *   - utilization ≥ 50%    → orange (#f39c12)
+     *   - status 'up' < 50%    → green  (#2ecc71)
+     *   - unknown              → grey   (#95a5a6)
      *
-     * @param {string} status - 'up', 'down', or anything else
+     * @param {object} link  — must have { type, status, utilization_pct }
      * @returns {string} hex color
      */
-    function linkColor(status) {
-        if (status === 'up') {
-            return '#2ecc71';
-        }
-        if (status === 'down') {
-            return '#e74c3c';
-        }
+    function linkColor(link) {
+        if (link.type === 'manual')         { return '#3498db'; }
+        if (link.status === 'down')         { return '#e74c3c'; }
+        if ((link.utilization_pct || 0) >= 80) { return '#e74c3c'; }
+        if ((link.utilization_pct || 0) >= 50) { return '#f39c12'; }
+        if (link.status === 'up')           { return '#2ecc71'; }
         return '#95a5a6';
     }
 
     /**
-     * Calculate polyline weight (px) proportional to link utilization.
-     *
-     * Uses a logarithmic scale so low-traffic links remain visible and
-     * high-traffic links don't dominate the map:
+     * Link weight (px) using logarithmic scale so low-traffic links remain
+     * visible and high-traffic links don't dominate the map.
      *   0%   → 1 px
      *   100% → 8 px
-     *
      * Formula: 1 + 7 * log(1 + pct) / log(101)
      *
-     * @param {number} utilization_pct - 0 to 100 (can exceed 100)
-     * @returns {number} line weight in pixels
+     * @param {number} utilization_pct
+     * @returns {number}
      */
     function linkWeight(utilization_pct) {
-        if (!utilization_pct || utilization_pct <= 0) {
-            return 1;
-        }
+        if (!utilization_pct || utilization_pct <= 0) { return 1; }
         const clamped = Math.min(utilization_pct, 100);
         return Math.max(1, Math.min(8, 1 + 7 * Math.log(1 + clamped) / Math.log(101)));
+    }
+
+    // ── Haversine distance ───────────────────────────────────────────────
+
+    /**
+     * Returns the great-circle distance in metres between two GPS coordinates.
+     *
+     * @param {number} lat1
+     * @param {number} lng1
+     * @param {number} lat2
+     * @param {number} lng2
+     * @returns {number} distance in metres
+     */
+    function haversineM(lat1, lng1, lat2, lng2) {
+        const R  = 6371000; // Earth radius in metres
+        const φ1 = lat1 * Math.PI / 180;
+        const φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180;
+        const Δλ = (lng2 - lng1) * Math.PI / 180;
+        const a  = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                   Math.cos(φ1) * Math.cos(φ2) *
+                   Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // ── Geographic grouping ──────────────────────────────────────────────
+
+    /**
+     * Greedily group devices that are within GEO_GROUP_THRESHOLD_M of each
+     * other. The first device in each group sets the group's centre.
+     *
+     * Group name comes from the first device's `location` field (set by
+     * api/devices.php). Falls back to display_name if location is absent.
+     *
+     * @param {Array} devices
+     * @returns {{ groups: Array, deviceToGroup: Object }}
+     */
+    function computeGeoGroups(devices) {
+        const groups       = [];
+        const deviceToGroup = {};
+
+        devices.forEach(function (device) {
+            let assignedGroup = null;
+            for (let i = 0; i < groups.length; i++) {
+                const g    = groups[i];
+                const dist = haversineM(device.lat, device.lng, g.lat, g.lng);
+                if (dist <= GEO_GROUP_THRESHOLD_M) {
+                    assignedGroup = g;
+                    break;
+                }
+            }
+
+            if (assignedGroup) {
+                assignedGroup.devices.push(device);
+                deviceToGroup[device.id] = assignedGroup.id;
+            } else {
+                const gid      = 'g' + groups.length;
+                const newGroup = {
+                    id:      gid,
+                    name:    device.location || device.display_name,
+                    lat:     device.lat,
+                    lng:     device.lng,
+                    devices: [device]
+                };
+                groups.push(newGroup);
+                deviceToGroup[device.id] = gid;
+            }
+        });
+
+        return { groups, deviceToGroup };
+    }
+
+    /**
+     * Aggregate links for grouped rendering.
+     *
+     * - Links within the same group (intra-group) are discarded.
+     * - Links between different groups are merged by canonical pair key.
+     *   The aggregated entry tracks worst-case utilization, has_down flag,
+     *   and whether any member is a manual link.
+     *
+     * @param {Array}  links
+     * @param {Object} deviceToGroup  — { deviceId: groupId }
+     * @returns {Array} aggregated link objects
+     */
+    function aggregateLinks(links, deviceToGroup) {
+        const agg = {};
+
+        links.forEach(function (link) {
+            const fg = deviceToGroup[link.local_device_id];
+            const tg = deviceToGroup[link.remote_device_id];
+
+            if (!fg || !tg || fg === tg) { return; } // skip intra-group
+
+            // Canonical key: always smaller group string first
+            const key = fg < tg ? fg + '_' + tg : tg + '_' + fg;
+
+            const pct = link.utilization_pct || 0;
+
+            if (!agg[key]) {
+                agg[key] = {
+                    from_group:      fg,
+                    to_group:        tg,
+                    max_utilization: pct,
+                    has_down:        link.status === 'down',
+                    has_manual:      link.type   === 'manual',
+                    count:           1,
+                    in_bps:          link.in_bps  || 0,
+                    out_bps:         link.out_bps || 0,
+                    speed_bps:       link.speed_bps || 0,
+                };
+            } else {
+                const a = agg[key];
+                a.max_utilization = Math.max(a.max_utilization, pct);
+                if (link.status === 'down')   { a.has_down   = true; }
+                if (link.type   === 'manual') { a.has_manual = true; }
+                a.count++;
+                a.in_bps    = Math.max(a.in_bps,    link.in_bps  || 0);
+                a.out_bps   = Math.max(a.out_bps,   link.out_bps || 0);
+                a.speed_bps = Math.max(a.speed_bps, link.speed_bps || 0);
+            }
+        });
+
+        return Object.values(agg);
     }
 
     // ── Loading overlay ──────────────────────────────────────────────────
 
     function showLoading() {
-        if (loadingEl) {
-            loadingEl.classList.add('visible');
-        }
+        if (loadingEl) { loadingEl.classList.add('visible'); }
     }
 
     function hideLoading() {
-        if (loadingEl) {
-            loadingEl.classList.remove('visible');
-        }
+        if (loadingEl) { loadingEl.classList.remove('visible'); }
     }
 
     // ── Rendering ────────────────────────────────────────────────────────
 
+    let isFirstLoad = true;
+
     /**
-     * Render device CircleMarkers and DivIcon labels onto the map.
-     * Returns a lookup map { deviceId -> latLng } for link rendering.
+     * Clear all layers and re-render based on current zoom level.
+     * Uses cachedDevices / cachedLinks — does NOT fetch from the API.
+     *
+     * zoom < zoomThreshold  → grouped (geographic cluster) view
+     * zoom ≥ zoomThreshold  → individual device view
+     */
+    function renderAll() {
+        linkLayer.clearLayers();
+        deviceLayer.clearLayers();
+        labelLayer.clearLayers();
+
+        if (cachedDevices.length === 0) { return; }
+
+        const zoom    = map.getZoom();
+        const grouped = zoom < config.zoomThreshold;
+
+        if (grouped) {
+            renderGrouped(cachedDevices, cachedLinks);
+        } else {
+            renderIndividual(cachedDevices, cachedLinks);
+        }
+    }
+
+    /**
+     * Render devices as geographic group markers with aggregated links.
+     * Groups with >1 device show "Name (N)" labels.
      *
      * @param {Array} devices
-     * @returns {Object} deviceCoords - { id: L.LatLng }
+     * @param {Array} links
      */
-    function renderDevices(devices) {
-        const deviceCoords = {};
+    function renderGrouped(devices, links) {
+        const { groups, deviceToGroup } = computeGeoGroups(devices);
 
-        devices.forEach(function (d) {
-            const latLng = L.latLng(d.lat, d.lng);
-            deviceCoords[d.id] = latLng;
+        // Coordinate lookup by group ID
+        const coordMap = {};
+        groups.forEach(function (g) { coordMap[g.id] = L.latLng(g.lat, g.lng); });
 
-            // Circle marker
-            const circle = L.circleMarker(latLng, {
-                radius: 8,
-                fillColor: deviceColor(d),
-                fillOpacity: 0.85,
-                weight: 2,
-                color: '#fff'
+        // Render group markers
+        groups.forEach(function (g) {
+            let hasDown = false, hasAlerts = false;
+            g.devices.forEach(function (d) {
+                if (d.status === 0)          { hasDown   = true; }
+                if (d.active_alerts > 0)     { hasAlerts = true; }
             });
 
-            // Status text for popup
+            let color = '#2ecc71';
+            if (hasDown)        { color = '#e74c3c'; }
+            else if (hasAlerts) { color = '#f39c12'; }
+
+            const latLng = coordMap[g.id];
+            const radius = g.devices.length > 1 ? 10 : 8;
+
+            const circle = L.circleMarker(latLng, {
+                radius,
+                fillColor:   color,
+                fillOpacity: 0.85,
+                weight:      2,
+                color:       '#fff'
+            });
+
+            // Label: "Name (N)" for multi-device groups
+            const labelText = g.devices.length > 1
+                ? `${g.name} (${g.devices.length})`
+                : g.name;
+
+            // Popup: list all devices in the group
+            const deviceListHtml = g.devices.map(function (d) {
+                const st = d.status === 1
+                    ? '<span class="status-up">UP</span>'
+                    : '<span class="status-down">DOWN</span>';
+                return `<li>${escapeHtml(d.display_name)}: ${st}</li>`;
+            }).join('');
+
+            const popupHtml = `<div class="netmap-popup">
+  <h4>${escapeHtml(g.name)}</h4>
+  <ul style="padding-left:16px;margin:4px 0;">${deviceListHtml}</ul>
+</div>`;
+
+            circle.bindPopup(popupHtml, { className: 'netmap-popup' });
+            circle.addTo(deviceLayer);
+
+            const labelIcon = L.divIcon({
+                className: '',
+                html:      `<div class="netmap-label">${escapeHtml(labelText)}</div>`,
+                iconAnchor: [0, 0]
+            });
+            L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
+        });
+
+        // Render aggregated inter-group links
+        const aggLinks = aggregateLinks(links, deviceToGroup);
+        aggLinks.forEach(function (a) {
+            const from = coordMap[a.from_group];
+            const to   = coordMap[a.to_group];
+            if (!from || !to) { return; }
+
+            // Synthesize a link-like object for linkColor
+            // Manual-only groups get blue; if any member is down → red wins
+            const synthLink = {
+                type:            (a.has_manual && !a.has_down) ? 'manual' : 'lldp',
+                status:          a.has_down ? 'down' : 'up',
+                utilization_pct: a.max_utilization,
+            };
+
+            const opts = {
+                color:   linkColor(synthLink),
+                weight:  linkWeight(a.max_utilization),
+                opacity: 0.7
+            };
+            if (a.has_manual) { opts.dashArray = '6, 4'; }
+
+            const line = L.polyline([from, to], opts);
+
+            const typeLabel = a.has_manual ? 'Manual' : 'LLDP';
+            const tooltip   = `${a.count} enlace${a.count > 1 ? 's' : ''} | ${typeLabel} | ${synthLink.status.toUpperCase()} | ${a.max_utilization.toFixed(1)}%`;
+            line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
+            line.addTo(linkLayer);
+        });
+    }
+
+    /**
+     * Render individual device markers with jitter for same-location devices,
+     * and link polylines colored by utilization/type.
+     *
+     * @param {Array} devices
+     * @param {Array} links
+     */
+    function renderIndividual(devices, links) {
+        const deviceCoords = {};
+
+        // Circular jitter for devices sharing the exact same lat/lng (~25m radius)
+        const locationGroups = {};
+        devices.forEach(function (d) {
+            const key = String(d.lat) + ',' + String(d.lng);
+            if (!locationGroups[key]) { locationGroups[key] = []; }
+            locationGroups[key].push(d.id);
+        });
+
+        const jitter = {};
+        Object.keys(locationGroups).forEach(function (key) {
+            const ids = locationGroups[key];
+            if (ids.length < 2) { return; }
+            const parts   = key.split(',');
+            const baseLat = parseFloat(parts[0]);
+            const baseLng = parseFloat(parts[1]);
+            const radius  = 0.00025; // ~25m
+            const cosLat  = Math.cos(baseLat * Math.PI / 180);
+            ids.forEach(function (id, idx) {
+                const angle = (2 * Math.PI * idx) / ids.length;
+                jitter[id]  = [
+                    baseLat + radius * Math.sin(angle),
+                    baseLng + radius * Math.cos(angle) / cosLat
+                ];
+            });
+        });
+
+        // Render device circles and labels
+        devices.forEach(function (d) {
+            const coords = jitter[d.id] || [d.lat, d.lng];
+            const latLng = L.latLng(coords[0], coords[1]);
+            deviceCoords[d.id] = latLng;
+
+            const circle = L.circleMarker(latLng, {
+                radius:      8,
+                fillColor:   deviceColor(d),
+                fillOpacity: 0.85,
+                weight:      2,
+                color:       '#fff'
+            });
+
             const statusHtml = d.status === 1
                 ? '<span class="status-up">UP &#10003;</span>'
                 : '<span class="status-down">DOWN &#10007;</span>';
@@ -191,73 +461,45 @@
             circle.bindPopup(popupHtml, { className: 'netmap-popup' });
             circle.addTo(deviceLayer);
 
-            // Always-visible label below the circle
             const labelIcon = L.divIcon({
-                className: '', // no default leaflet styling
-                html: `<div class="netmap-label">${escapeHtml(d.display_name)}</div>`,
+                className:  '',
+                html:       `<div class="netmap-label">${escapeHtml(d.display_name)}</div>`,
                 iconAnchor: [0, 0]
             });
-
-            const labelMarker = L.marker(latLng, {
-                icon: labelIcon,
-                interactive: false // labels are not clickable
-            });
-
-            labelMarker.addTo(labelLayer);
+            L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
         });
 
-        return deviceCoords;
-    }
-
-    /**
-     * Render link polylines between devices.
-     *
-     * @param {Array} links
-     * @param {Object} deviceCoords - { deviceId: L.LatLng }
-     */
-    function renderLinks(links, deviceCoords) {
+        // Render link polylines
         links.forEach(function (link) {
             const from = deviceCoords[link.local_device_id];
-            const to = deviceCoords[link.remote_device_id];
+            const to   = deviceCoords[link.remote_device_id];
+            if (!from || !to) { return; }
 
-            // Skip links where either device is missing from the loaded set
-            if (!from || !to) {
-                return;
-            }
-
-            const polylineOpts = {
-                color: linkColor(link.status),
-                weight: linkWeight(link.utilization_pct || 0),
+            const opts = {
+                color:   linkColor(link),
+                weight:  linkWeight(link.utilization_pct || 0),
                 opacity: 0.7
             };
+            if (link.type === 'manual') { opts.dashArray = '6, 4'; }
 
-            // Manual links are drawn dashed
-            if (link.type === 'manual') {
-                polylineOpts.dashArray = '6, 4';
-            }
+            const line = L.polyline([from, to], opts);
 
-            const line = L.polyline([from, to], polylineOpts);
-
-            // Tooltip on hover
             const statusLabel = (link.status || 'unknown').toUpperCase();
-            const utilizationLabel = link.utilization_pct > 0
+            const typeLabel   = link.type === 'manual' ? 'Manual' : 'LLDP';
+            const utilLabel   = (link.utilization_pct > 0)
                 ? ` | ${link.utilization_pct.toFixed(1)}%`
                 : '';
-            const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}\n${formatSpeed(link.speed_bps)} | ${statusLabel}${utilizationLabel}`;
+            const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}<br>${typeLabel} | ${formatSpeed(link.speed_bps)} | ${statusLabel}${utilLabel}`;
+            line.bindTooltip(tooltipText, { className: 'netmap-link-tooltip', sticky: true });
 
-            line.bindTooltip(tooltipText, {
-                className: 'netmap-link-tooltip',
-                sticky: true
-            });
-
-            // Popup on click
-            const statusClass = link.status === 'up' ? 'status-up' : 'status-down';
-            const trafficHtml = (link.in_bps > 0 || link.out_bps > 0)
+            const statusClass  = link.status === 'up' ? 'status-up' : 'status-down';
+            const trafficHtml  = (link.in_bps > 0 || link.out_bps > 0)
                 ? `<div>Tráfico: &#8595;${formatSpeed(link.in_bps)} / &#8593;${formatSpeed(link.out_bps)}</div>
   <div>Utilización: ${link.utilization_pct.toFixed(1)}%</div>`
                 : '';
             const popupHtml = `<div class="netmap-popup">
   <h4>${escapeHtml(link.local_port)} &#9472;&#9472;&#9472;&#9472; ${escapeHtml(link.remote_port)}</h4>
+  <div>Tipo: ${escapeHtml(typeLabel)}</div>
   <div>Velocidad: ${formatSpeed(link.speed_bps)}</div>
   <div>Estado: <span class="${statusClass}">${statusLabel}</span></div>
   ${trafficHtml}</div>`;
@@ -267,41 +509,22 @@
         });
     }
 
-    // ── HTML escaping ────────────────────────────────────────────────────
+    // ── Zoom-driven re-render (no re-fetch) ──────────────────────────────
+    map.on('zoomend', renderAll);
+
+    // ── Data fetching ────────────────────────────────────────────────────
 
     /**
-     * Minimal HTML escaping to prevent XSS from device names / port labels.
-     *
-     * @param {string} str
-     * @returns {string}
-     */
-    function escapeHtml(str) {
-        if (str == null) {
-            return '';
-        }
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-
-    // ── Data fetching & refresh ──────────────────────────────────────────
-
-    let isFirstLoad = true;
-
-    /**
-     * Fetch devices and links from the API in parallel, clear existing
-     * layers, and re-render the map.
+     * Fetch devices and links in parallel, update the cache, and re-render.
+     * fitBounds is applied only on the first successful load.
      */
     async function loadData() {
         showLoading();
 
         try {
             const [devicesResponse, linksResponse] = await Promise.all([
-                fetch(config.apiDevices, {credentials: 'same-origin'}),
-                fetch(config.apiLinks, {credentials: 'same-origin'})
+                fetch(config.apiDevices, { credentials: 'same-origin' }),
+                fetch(config.apiLinks,   { credentials: 'same-origin' })
             ]);
 
             if (!devicesResponse.ok) {
@@ -312,24 +535,16 @@
             }
 
             const devicesData = await devicesResponse.json();
-            const linksData = await linksResponse.json();
+            const linksData   = await linksResponse.json();
 
-            const devices = devicesData.devices || [];
-            const links = linksData.links || [];
+            cachedDevices = devicesData.devices || [];
+            cachedLinks   = linksData.links     || [];
 
-            // Clear existing layers
-            deviceLayer.clearLayers();
-            labelLayer.clearLayers();
-            linkLayer.clearLayers();
+            renderAll();
 
-            // Render devices first (to build coord lookup), then links
-            const deviceCoords = renderDevices(devices);
-            renderLinks(links, deviceCoords);
-
-            // Fit bounds on first load to encompass all device coordinates
-            if (isFirstLoad && devices.length > 0) {
+            if (isFirstLoad && cachedDevices.length > 0) {
                 const bounds = L.latLngBounds(
-                    devices.map(function (d) { return [d.lat, d.lng]; })
+                    cachedDevices.map(function (d) { return [d.lat, d.lng]; })
                 );
                 map.fitBounds(bounds, { padding: [40, 40] });
                 isFirstLoad = false;
@@ -346,11 +561,8 @@
     const refreshMs = (config.refreshInterval || 60) * 1000;
     setInterval(loadData, refreshMs);
 
-    // Manual refresh button
     if (refreshBtn) {
-        refreshBtn.addEventListener('click', function () {
-            loadData();
-        });
+        refreshBtn.addEventListener('click', function () { loadData(); });
     }
 
     // ── Initial load ─────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ document.getElementById('leaflet-css-cdn').addEventListener('error', function() 
     <div id="netmap"></div>
     <div class="netmap-toolbar">
         <button class="btn" id="netmap-refresh" title="Actualizar">↺</button>
-        <a class="btn" href="/plugin/v1/NetworkMap&amp;view=settings" title="Configuración">⚙</a>
+        <a class="btn" href="/plugin/v1/NetworkMap?view=settings" title="Configuración">⚙</a>
     </div>
 </div>
 

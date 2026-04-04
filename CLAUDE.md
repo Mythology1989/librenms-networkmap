@@ -37,15 +37,19 @@ NetworkMap/
 ├── NetworkMap.php       # Clase de registro de hooks (menu, etc.) — instanciada por Laravel al arrancar
 ├── NetworkMap.inc.php   # Vista/router principal — servida por PluginLegacyController
 ├── map.php              # Vista principal — lógica de mapa solo en networkmap.js
-├── tv.php               # Vista TV/NOC — fullscreen, sin navbar, sin popups
+├── tv.php               # Vista TV/NOC — fullscreen, token-only auth, sin navbar, sin popups
+├── config.php           # Panel de configuración admin — include'd por NetworkMap.inc.php (?view=settings)
 ├── api/
 │   ├── devices.php      # GET: dispositivos con lat/lng y estado
 │   ├── links.php        # GET: enlaces LLDP + manuales con tráfico
 │   └── settings.php     # GET/POST: configuración del plugin
 ├── js/
-│   └── networkmap.js    # TODA la lógica del mapa va aquí — no JS inline en PHP
+│   ├── networkmap.js    # TODA la lógica del mapa va aquí — no JS inline en PHP
+│   └── leaflet.markercluster.js  # Fallback local Leaflet.markercluster 1.4.1
 ├── css/
-│   └── networkmap.css
+│   ├── networkmap.css
+│   ├── MarkerCluster.css         # Fallback local MarkerCluster
+│   └── MarkerCluster.Default.css # Fallback local MarkerCluster default theme
 ├── includes/
 │   └── db.php           # Helpers de queries — reutilizar, no duplicar
 └── sql/
@@ -136,6 +140,28 @@ siempre saldrá a 0.
   es 0 (p.ej. interfaces VLAN/bridge). La función `linkWeight()` clampea a 100%
   para el cálculo del grosor (max 8px). La utilización en el popup sí puede
   superar 100% — es información útil para detectar links mal configurados.
+- **Vista TV (`tv.php`) — auth solo por token, sin sesión.** La vista TV hace
+  `exit` al final para bypasear el Blade wrapper. Valida el token con
+  `hash_equals()` antes de cualquier output. Los datos se cargan server-side
+  directamente (sin AJAX), así el autorefresh con `location.reload()` preserva
+  el token en la URL y no necesita sesión de LibreNMS.
+- **Labels de Leaflet.markercluster — sincronización manual obligatoria.** Los
+  DivIcon labels en un `L.layerGroup()` separado no se ocultan automáticamente
+  cuando el CircleMarker correspondiente entra en un cluster. Solución: guardar
+  `deviceMarkerMap[id]` y `deviceLabelMap[id]`, escuchar `deviceLayer.on('animationend', syncClusterLabels)`,
+  y en `syncClusterLabels()` usar `deviceLayer.getVisibleParent(marker) === marker`
+  para decidir `display: none` o `display: ''`.
+- **`config.php` (panel de configuración) — usar `return` no `exit` en 403.**
+  El archivo se include desde `NetworkMap.inc.php` que a su vez está dentro del
+  `ob_start()` del Blade template. Con `exit` se cortaría el template entero.
+  Con `return` se aborta solo la ejecución de `config.php` y el Blade termina
+  de renderizar la página normalmente (con el mensaje de error visible).
+- **MarkerCluster CDN: usar jsDelivr para consistencia con Leaflet.** URLs:
+  `cdn.jsdelivr.net/npm/leaflet.markercluster@1.4.1/dist/`. El fallback local
+  está en `js/leaflet.markercluster.js`, `css/MarkerCluster.css` y
+  `css/MarkerCluster.Default.css`. El guard del fallback debe comprobar
+  `typeof L === 'undefined' || typeof L.MarkerClusterGroup === 'undefined'`
+  (doble comprobación para evitar TypeError si Leaflet tampoco cargó).
 
 ## Convenciones
 - Commits: `tipo(scope): mensaje` — feat, fix, chore, docs, refactor

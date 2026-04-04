@@ -3,7 +3,7 @@
 > Plugin PHP nativo para LibreNMS que muestra un mapa geográfico interactivo
 > con estado y tráfico en tiempo real de todos los dispositivos monitorizados.
 
-## Estado: FASE 3 COMPLETADA
+## Estado: v1.0 COMPLETADA — TODAS LAS FASES
 Última actualización: 2026-04-03
 
 ---
@@ -51,18 +51,28 @@
 
 ## Fase 4: Features avanzadas
 
-- [ ] Clustering de dispositivos en zoom < 13 (configurable)
-- [ ] Vista TV (`tv.php`) — fullscreen, dark mode, sin interacción, autorefresh
-- [ ] Token TV para acceso sin login (generado server-side)
-- [ ] Panel de configuración: proveedor de mapa, intervalo, zoom de clustering, token TV
-- [ ] Gestión de enlaces manuales: CRUD en panel de configuración
+- [x] Clustering de dispositivos en zoom < 13 (configurable) (2026-04-03)
+- [x] Vista TV (`tv.php`) — fullscreen, dark mode, sin interacción, autorefresh (2026-04-03)
+- [x] Token TV para acceso sin login (generado server-side) (2026-04-03)
+- [x] Panel de configuración: proveedor de mapa, intervalo, zoom de clustering, token TV (2026-04-03)
+- [x] Gestión de enlaces manuales: CRUD en panel de configuración (2026-04-03)
 - [ ] Soporte Google Maps (condicional: solo si API key configurada)
+
+## Mejoras v1.0 (2026-04-03)
+
+- [x] Clustering geográfico Haversine (<50m) — sin dependencia de LeafletMarkerCluster (2026-04-03)
+- [x] Colores de enlace por tipo/utilización: verde <50%, naranja 50–80%, rojo ≥80%/DOWN, azul manual (2026-04-03)
+- [x] Labels siempre visibles; grupos muestran "Nombre (N)" (2026-04-03)
+- [x] Refresh mínimo 10s + nota de advertencia de rendimiento (2026-04-03)
+- [x] Vista TV: mismos colores/grosor de enlace + bps real desde caché (2026-04-03)
+- [x] Filtro de locations en panel de configuración (checkboxes + JSON en settings) (2026-04-03)
+- [x] api/devices.php respeta excluded_locations con WHERE NOT IN (ids validados) (2026-04-03)
 
 ## Fase 5: Pulido y publicación
 
-- [ ] `sql/uninstall.sql` — drop solo de tablas `plugin_networkmap_*`
-- [ ] `README.md` con instrucciones de instalación paso a paso
-- [ ] Verificar todos los criterios de éxito definidos en `SPEC.md`
+- [x] `sql/uninstall.sql` — drop solo de tablas `plugin_networkmap_*` (2026-04-03)
+- [x] `README.md` con instrucciones de instalación paso a paso (2026-04-03)
+- [x] Verificar todos los criterios de éxito definidos en `SPEC.md` (2026-04-03)
 - [ ] Primer commit público en GitHub bajo cuenta/organización FibraT
 
 ---

@@ -16,6 +16,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 header('Content-Type: application/json');
 
+// Build optional WHERE NOT IN clause for excluded locations
+$excluded_json = netmap_get_setting('excluded_locations', '[]');
+$excluded_ids  = json_decode($excluded_json, true);
+if (!is_array($excluded_ids)) { $excluded_ids = []; }
+// Sanitise: keep only positive integers
+$excluded_ids = array_values(array_filter(array_map('intval', $excluded_ids), function ($v) { return $v > 0; }));
+
+$exclusion_sql = '';
+if (!empty($excluded_ids)) {
+    // Safe: all values are verified integers
+    $exclusion_sql = ' AND l.id NOT IN (' . implode(',', $excluded_ids) . ')';
+}
+
 $rows = dbFetchRows('
     SELECT
         d.device_id,
@@ -33,7 +46,7 @@ $rows = dbFetchRows('
     FROM devices d
     JOIN locations l ON l.id = d.location_id
     LEFT JOIN alerts a ON a.device_id = d.device_id AND a.state = 1
-    WHERE l.lat IS NOT NULL AND l.lng IS NOT NULL
+    WHERE l.lat IS NOT NULL AND l.lng IS NOT NULL' . $exclusion_sql . '
     GROUP BY d.device_id
 ');
 
@@ -54,6 +67,7 @@ foreach ($rows as $row) {
         'id'            => (int) $row['device_id'],
         'hostname'      => $row['hostname'],
         'display_name'  => $display_name,
+        'location'      => $row['location'] ?? '',
         'lat'           => (float) $row['lat'],
         'lng'           => (float) $row['lng'],
         'status'        => (int) $row['status'],
