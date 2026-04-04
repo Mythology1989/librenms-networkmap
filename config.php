@@ -8,6 +8,7 @@ if (! auth()->check() || ! auth()->user()->hasRole('admin')) {
 
 // Load current settings
 $setting_map_provider      = netmap_get_setting('map_provider',           'osm');
+$setting_google_api_key    = netmap_get_setting('google_api_key',         '');
 $setting_refresh_interval  = (int) netmap_get_setting('refresh_interval', 60);
 $setting_zoom_threshold    = (int) netmap_get_setting('zoom_threshold_cluster', 18);
 $setting_tv_token          = netmap_get_setting('tv_token', '');
@@ -103,6 +104,16 @@ if ($locations_list === false) { $locations_list = []; }
           <option value="osm" <?= $setting_map_provider === 'osm' ? 'selected' : '' ?>>OpenStreetMap</option>
           <option value="google" <?= $setting_map_provider === 'google' ? 'selected' : '' ?>>Google Maps</option>
         </select>
+      </div>
+
+      <!-- Google Maps API key (shown only when Google Maps is selected) -->
+      <div class="form-group" id="nm-google-apikey-group"
+           style="display:<?= $setting_map_provider === 'google' ? '' : 'none' ?>;">
+        <label for="nm-google-api-key">API Key de Google Maps</label>
+        <input type="text" class="form-control" id="nm-google-api-key" name="google_api_key"
+               value="<?= htmlspecialchars($setting_google_api_key, ENT_QUOTES, 'UTF-8') ?>"
+               placeholder="AIza…" autocomplete="off">
+        <p class="help-block">Requerida para usar Google Maps. Sin ella se usará OpenStreetMap como fallback.</p>
       </div>
 
       <!-- Refresh interval -->
@@ -227,11 +238,17 @@ if ($locations_list === false) { $locations_list = []; }
         <button type="button" class="btn btn-default btn-xs" id="nm-lf-enable-all">Activar todos</button>
         <button type="button" class="btn btn-default btn-xs" id="nm-lf-disable-all" style="margin-left:4px;">Desactivar todos</button>
       </div>
-      <table class="table table-condensed table-bordered" style="margin-bottom:10px;">
+      <table class="table table-condensed table-bordered" style="margin-bottom:10px;" id="nm-lf-table">
         <thead>
           <tr>
-            <th>ID</th><th>Origen</th><th>Destino</th><th>Puerto local</th>
-            <th>Velocidad</th><th>Tráfico (↓&nbsp;/&nbsp;↑)</th><th>Prioridad</th><th>Mostrar</th>
+            <th data-sort="0">ID</th>
+            <th data-sort="1">Origen</th>
+            <th data-sort="2">Destino</th>
+            <th data-sort="3">Puerto local</th>
+            <th data-sort="4" data-sort-type="number">Velocidad</th>
+            <th data-sort="5" data-sort-type="number">Tráfico&nbsp;(↓/↑)</th>
+            <th data-sort="6" data-sort-type="number">Prioridad</th>
+            <th>Mostrar</th>
           </tr>
         </thead>
         <tbody id="nm-lf-tbody"></tbody>
@@ -249,16 +266,22 @@ if ($locations_list === false) { $locations_list = []; }
       Nombre personalizado que aparece en el mapa para cada dispositivo.
       Deja el campo vacío para usar el nombre por defecto (<code>display → sysName → hostname</code>).
     </p>
-    <table class="table table-condensed table-bordered">
+    <table class="table table-condensed table-bordered" id="nm-names-table">
       <thead>
-        <tr><th>Dispositivo</th><th>Nombre en el mapa</th><th></th></tr>
+        <tr>
+          <th data-sort="0" data-sort-type="number">ID</th>
+          <th data-sort="1">Hostname</th>
+          <th data-sort="2">Nombre en el mapa</th>
+          <th></th>
+        </tr>
       </thead>
       <tbody>
         <?php if (empty($all_devices)): ?>
-        <tr><td colspan="3" class="text-muted text-center">No hay dispositivos con coordenadas.</td></tr>
+        <tr><td colspan="4" class="text-muted text-center">No hay dispositivos con coordenadas.</td></tr>
         <?php else: ?>
         <?php foreach ($all_devices as $d): ?>
         <tr>
+          <td><?= (int) $d['device_id'] ?></td>
           <td><?= htmlspecialchars($d['display_name'], ENT_QUOTES, 'UTF-8') ?></td>
           <td>
             <input type="text" class="form-control input-sm nm-label-input"
@@ -287,14 +310,14 @@ if ($locations_list === false) { $locations_list = []; }
       Locations con coordenadas válidas. Marca "Excluir" para ocultar una location del mapa.
     </p>
     <form id="nm-locations-form">
-    <table class="table table-condensed table-bordered" style="margin-bottom:10px;">
+    <table class="table table-condensed table-bordered" style="margin-bottom:10px;" id="nm-locations-table">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Nombre</th>
-          <th>Lat</th>
-          <th>Lng</th>
-          <th>Dispositivos</th>
+          <th data-sort="0" data-sort-type="number">ID</th>
+          <th data-sort="1">Nombre</th>
+          <th data-sort="2" data-sort-type="number">Lat</th>
+          <th data-sort="3" data-sort-type="number">Lng</th>
+          <th data-sort="4" data-sort-type="number">Dispositivos</th>
           <th>Excluir</th>
         </tr>
       </thead>
@@ -395,9 +418,9 @@ if ($locations_list === false) { $locations_list = []; }
                         '<td>' + escapeHtml(devMap[link.local_device_id]  || String(link.local_device_id))  + '</td>' +
                         '<td>' + escapeHtml(devMap[link.remote_device_id] || String(link.remote_device_id)) + '</td>' +
                         '<td>' + escapeHtml(link.local_port || '—') + '</td>' +
-                        '<td>' + escapeHtml(fmtBps(link.speed_bps)) + '</td>' +
-                        '<td>' + escapeHtml(traffic) + '</td>' +
-                        '<td class="text-center">' +
+                        '<td data-sort-val="' + (link.speed_bps || 0) + '">' + escapeHtml(fmtBps(link.speed_bps)) + '</td>' +
+                        '<td data-sort-val="' + (link.in_bps || 0) + '">' + escapeHtml(traffic) + '</td>' +
+                        '<td class="text-center" data-sort-val="' + (priority !== '' ? priority : 999) + '">' +
                           '<input type="number" name="link_priority" min="1" max="99" style="width:60px;"' +
                           ' data-link-id="' + escapeHtml(link.id) + '"' +
                           ' value="' + escapeHtml(String(priority)) + '" placeholder="—">' +
@@ -409,6 +432,7 @@ if ($locations_list === false) { $locations_list = []; }
             }
             document.getElementById('nm-lf-loading').style.display = 'none';
             document.getElementById('nm-links-filter-form').style.display = '';
+            makeTableSortable('nm-lf-table');
         }).catch(function() {
             document.getElementById('nm-lf-loading').textContent = 'Error al cargar enlaces.';
         });
@@ -475,12 +499,20 @@ if ($locations_list === false) { $locations_list = []; }
         });
     });
 
+    // ── Google Maps API key field visibility ──────────────────────────────
+
+    document.getElementById('nm-map-provider').addEventListener('change', function () {
+        var grp = document.getElementById('nm-google-apikey-group');
+        if (grp) { grp.style.display = (this.value === 'google') ? '' : 'none'; }
+    });
+
     // ── Settings form ────────────────────────────────────────────────────
 
     document.getElementById('netmap-settings-form').addEventListener('submit', function(e) {
         e.preventDefault();
         var settings = {
             map_provider:           document.getElementById('nm-map-provider').value,
+            google_api_key:         document.getElementById('nm-google-api-key').value,
             refresh_interval:       document.getElementById('nm-refresh').value,
             zoom_threshold_cluster: document.getElementById('nm-zoom').value
         };
@@ -658,6 +690,53 @@ if ($locations_list === false) { $locations_list = []; }
             }
         });
     });
+
+    // ── Sortable tables ──────────────────────────────────────────────────
+
+    function makeTableSortable(tableId) {
+        var table = document.getElementById(tableId);
+        if (!table) { return; }
+        var headers = table.querySelectorAll('thead th[data-sort]');
+        headers.forEach(function(th) {
+            th.style.cursor = 'pointer';
+            th.style.userSelect = 'none';
+            th.setAttribute('data-label', th.textContent.trim());
+            th.addEventListener('click', function() {
+                var col  = parseInt(th.getAttribute('data-sort'), 10);
+                var type = th.getAttribute('data-sort-type') || 'string';
+                var dir  = th.getAttribute('data-dir') === 'asc' ? 'desc' : 'asc';
+
+                headers.forEach(function(h) {
+                    h.removeAttribute('data-dir');
+                    h.textContent = h.getAttribute('data-label');
+                });
+                th.setAttribute('data-dir', dir);
+                th.textContent = th.getAttribute('data-label') + (dir === 'asc' ? ' ↑' : ' ↓');
+
+                var tbody = table.querySelector('tbody');
+                var rows  = Array.from(tbody.querySelectorAll('tr'));
+                if (rows.length <= 1) { return; }
+
+                rows.sort(function(a, b) {
+                    var ac = a.cells[col], bc = b.cells[col];
+                    var av = ac ? (ac.getAttribute('data-sort-val') || ac.textContent.trim()) : '';
+                    var bv = bc ? (bc.getAttribute('data-sort-val') || bc.textContent.trim()) : '';
+                    if (type === 'number') {
+                        av = parseFloat(av) || 0;
+                        bv = parseFloat(bv) || 0;
+                        return dir === 'asc' ? av - bv : bv - av;
+                    }
+                    return dir === 'asc'
+                        ? av.localeCompare(bv, 'es', { sensitivity: 'base' })
+                        : bv.localeCompare(av, 'es', { sensitivity: 'base' });
+                });
+                rows.forEach(function(row) { tbody.appendChild(row); });
+            });
+        });
+    }
+
+    makeTableSortable('nm-names-table');
+    makeTableSortable('nm-locations-table');
 
 })();
 </script>
