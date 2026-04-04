@@ -61,7 +61,7 @@ $refresh_ms    = max(10, (int) netmap_get_setting('refresh_interval', 60)) * 100
 
 // Load links (LLDP + manual) with port data for bps/utilization calculation
 $lldp_raw = dbFetchRows('
-    SELECT l.local_device_id, l.remote_device_id,
+    SELECT l.id, l.local_device_id, l.remote_device_id,
            \'lldp\' AS type,
            CASE WHEN p.ifOperStatus = \'up\' THEN \'up\' ELSE \'down\' END AS status,
            p.port_id,
@@ -74,7 +74,7 @@ $lldp_raw = dbFetchRows('
 ', []);
 
 $manual_raw = dbFetchRows('
-    SELECT ml.local_device_id, ml.remote_device_id,
+    SELECT ml.id, ml.local_device_id, ml.remote_device_id,
            \'manual\' AS type,
            CASE WHEN p.ifOperStatus = \'up\' THEN \'up\' ELSE \'down\' END AS status,
            p.port_id,
@@ -96,6 +96,7 @@ if (is_array($lldp_raw)) {
             ? round(max($in_bps, $out_bps) / $speed * 100, 2)
             : 0.0;
         $links_arr[] = [
+            'id'               => 'lldp_' . (int) $row['id'],
             'local_device_id'  => (int) $row['local_device_id'],
             'remote_device_id' => (int) $row['remote_device_id'],
             'type'             => 'lldp',
@@ -121,6 +122,7 @@ if (is_array($manual_raw)) {
             ? round(max($in_bps, $out_bps) / $speed * 100, 2)
             : 0.0;
         $links_arr[] = [
+            'id'               => 'manual_' . (int) $row['id'],
             'local_device_id'  => (int) $row['local_device_id'],
             'remote_device_id' => (int) $row['remote_device_id'],
             'type'             => 'manual',
@@ -131,6 +133,16 @@ if (is_array($manual_raw)) {
             'utilization_pct'  => $util_pct,
         ];
     }
+}
+
+// Filter hidden links
+$hidden_links_raw = netmap_get_setting('hidden_links', '[]');
+$hidden_links_tv  = json_decode($hidden_links_raw, true);
+if (!is_array($hidden_links_tv)) { $hidden_links_tv = []; }
+if (!empty($hidden_links_tv)) {
+    $links_arr = array_values(array_filter($links_arr, function ($link) use ($hidden_links_tv) {
+        return !in_array($link['id'] ?? '', $hidden_links_tv, true);
+    }));
 }
 
 $links_json = json_encode($links_arr, JSON_UNESCAPED_UNICODE);

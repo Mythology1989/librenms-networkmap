@@ -16,6 +16,10 @@ $excluded_ids              = json_decode($excluded_json, true);
 if (!is_array($excluded_ids)) { $excluded_ids = []; }
 $excluded_ids = array_map('intval', $excluded_ids);
 
+$hidden_links_json         = netmap_get_setting('hidden_links', '[]');
+$hidden_links_arr          = json_decode($hidden_links_json, true);
+if (!is_array($hidden_links_arr)) { $hidden_links_arr = []; }
+
 // Auto-generate TV token if missing
 if ($setting_tv_token === '' || $setting_tv_token === null) {
     $setting_tv_token = bin2hex(random_bytes(16));
@@ -187,6 +191,29 @@ if ($locations_list === false) { $locations_list = []; }
 </div>
 
 <div class="panel panel-default">
+  <div class="panel-heading"><h3 class="panel-title">Filtro de enlaces</h3></div>
+  <div class="panel-body">
+    <p class="text-muted" style="margin-bottom:10px;">
+      Desmarca "Mostrar" para ocultar un enlace del mapa principal y de la vista TV.
+    </p>
+    <div id="nm-lf-loading" class="text-muted">Cargando enlaces…</div>
+    <form id="nm-links-filter-form" style="display:none;">
+      <table class="table table-condensed table-bordered" style="margin-bottom:10px;">
+        <thead>
+          <tr>
+            <th>ID</th><th>Origen</th><th>Destino</th><th>Puerto local</th>
+            <th>Velocidad</th><th>Tráfico (↓&nbsp;/&nbsp;↑)</th><th>Mostrar</th>
+          </tr>
+        </thead>
+        <tbody id="nm-lf-tbody"></tbody>
+      </table>
+      <button type="submit" class="btn btn-warning">Guardar filtro de enlaces</button>
+      <span id="nm-lf-msg" style="margin-left:10px;display:none;"></span>
+    </form>
+  </div>
+</div>
+
+<div class="panel panel-default">
   <div class="panel-heading"><h3 class="panel-title">Locations en el mapa</h3></div>
   <div class="panel-body">
     <p class="text-muted" style="margin-bottom:10px;">
@@ -236,11 +263,103 @@ if ($locations_list === false) { $locations_list = []; }
 
     var API_SETTINGS = '/plugin/v1/NetworkMap?api=settings';
     var API_LINKS    = '/plugin/v1/NetworkMap?api=links';
+    var API_DEVICES  = '/plugin/v1/NetworkMap?api=devices';
+
+    function escapeHtml(str) {
+        if (str == null) { return ''; }
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    function fmtBps(bps) {
+        if (!bps || bps <= 0) { return '—'; }
+        if (bps >= 1e9) { return (bps / 1e9).toFixed(1) + ' Gbps'; }
+        if (bps >= 1e6) { return (bps / 1e6).toFixed(1) + ' Mbps'; }
+        if (bps >= 1e3) { return (bps / 1e3).toFixed(1) + ' Kbps'; }
+        return bps + ' bps';
+    }
 
     function getCsrfToken() {
         var match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
         return match ? decodeURIComponent(match[1]) : '';
     }
+
+    var hiddenLinksArr = <?= json_encode($hidden_links_arr) ?>;
+
+    // ── Link filter ───────────────────────────────────────────────────────
+
+    (function loadLinkFilter() {
+        Promise.all([
+            fetch(API_DEVICES, { credentials: 'same-origin' }).then(function(r) { return r.json(); }),
+            fetch(API_LINKS,   { credentials: 'same-origin' }).then(function(r) { return r.json(); })
+        ]).then(function(results) {
+            var devMap = {};
+            (results[0].devices || []).forEach(function(d) {
+                devMap[d.id] = d.display_name || ('device_' + d.id);
+            });
+            var links = results[1].links || [];
+            var tbody = document.getElementById('nm-lf-tbody');
+            tbody.innerHTML = '';
+            if (links.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center">No hay enlaces.</td></tr>';
+            } else {
+                links.forEach(function(link) {
+                    var isHidden = hiddenLinksArr.indexOf(link.id) !== -1;
+                    var traffic  = (link.in_bps > 0 || link.out_bps > 0)
+                        ? '\u2193' + fmtBps(link.in_bps) + ' / \u2191' + fmtBps(link.out_bps)
+                        : '—';
+                    var tr = document.createElement('tr');
+                    tr.innerHTML =
+                        '<td><code>' + escapeHtml(link.id) + '</code></td>' +
+                        '<td>' + escapeHtml(devMap[link.local_device_id]  || String(link.local_device_id))  + '</td>' +
+                        '<td>' + escapeHtml(devMap[link.remote_device_id] || String(link.remote_device_id)) + '</td>' +
+                        '<td>' + escapeHtml(link.local_port || '—') + '</td>' +
+                        '<td>' + escapeHtml(fmtBps(link.speed_bps)) + '</td>' +
+                        '<td>' + escapeHtml(traffic) + '</td>' +
+                        '<td class="text-center"><input type="checkbox" name="link_visible"' +
+                        ' value="' + escapeHtml(link.id) + '"' + (isHidden ? '' : ' checked') + '></td>';
+                    tbody.appendChild(tr);
+                });
+            }
+            document.getElementById('nm-lf-loading').style.display = 'none';
+            document.getElementById('nm-links-filter-form').style.display = '';
+        }).catch(function() {
+            document.getElementById('nm-lf-loading').textContent = 'Error al cargar enlaces.';
+        });
+    })();
+
+    document.getElementById('nm-links-filter-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var unchecked = document.querySelectorAll('input[name="link_visible"]:not(:checked)');
+        var hidden = Array.from(unchecked).map(function(el) { return el.value; });
+        var msgEl = document.getElementById('nm-lf-msg');
+        msgEl.style.display = '';
+        msgEl.textContent = 'Guardando…';
+        msgEl.style.color = '#555';
+        fetch(API_SETTINGS, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
+            body: JSON.stringify({ key: 'hidden_links', value: JSON.stringify(hidden) })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                msgEl.textContent = '✓ Filtro guardado';
+                msgEl.style.color = '#27ae60';
+                hiddenLinksArr = hidden;
+            } else {
+                msgEl.textContent = '✗ ' + (data.error || 'Error');
+                msgEl.style.color = '#c0392b';
+            }
+            setTimeout(function() { msgEl.style.display = 'none'; }, 3000);
+        })
+        .catch(function() {
+            msgEl.textContent = '✗ Error de red';
+            msgEl.style.color = '#c0392b';
+        });
+    });
 
     // ── Settings form ────────────────────────────────────────────────────
 

@@ -78,6 +78,7 @@ if ($method === 'POST') {
         'zoom_threshold_cluster',
         'default_zoom',
         'excluded_locations',
+        'hidden_links',
     ];
 
     if (! isset($body['key']) || ! isset($body['value'])) {

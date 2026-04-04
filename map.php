@@ -8,6 +8,9 @@ $refresh_interval = (int) netmap_get_setting('refresh_interval', 60);
 $map_provider     = netmap_get_setting('map_provider', 'osm');
 $google_api_key   = netmap_get_setting('google_api_key', '');
 $zoom_threshold   = (int) netmap_get_setting('zoom_threshold_cluster', 18);
+$hidden_links_raw = netmap_get_setting('hidden_links', '[]');
+$hidden_links     = json_decode($hidden_links_raw, true);
+if (!is_array($hidden_links)) { $hidden_links = []; }
 
 ?>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css"
@@ -38,9 +41,10 @@ window.netmapConfig = {
     mapProvider: <?= json_encode($map_provider) ?>,
     googleApiKey: <?= json_encode($google_api_key) ?>,
     zoomThreshold: <?= $zoom_threshold ?>,
-    apiDevices: '/plugin/v1/NetworkMap?api=devices',
-    apiLinks:   '/plugin/v1/NetworkMap?api=links',
-    apiSettings: '/plugin/v1/NetworkMap?api=settings'
+    apiDevices:  '/plugin/v1/NetworkMap?api=devices',
+    apiLinks:    '/plugin/v1/NetworkMap?api=links',
+    apiSettings: '/plugin/v1/NetworkMap?api=settings',
+    hiddenLinks: <?= json_encode($hidden_links) ?>
 };
 </script>
 

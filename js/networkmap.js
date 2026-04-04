@@ -326,13 +326,17 @@
 
         if (cachedDevices.length === 0) { return; }
 
-        const zoom    = map.getZoom();
-        const grouped = zoom < config.zoomThreshold;
+        const zoom         = map.getZoom();
+        const grouped      = zoom < config.zoomThreshold;
+        const hiddenLinks  = config.hiddenLinks || [];
+        const visibleLinks = cachedLinks.filter(function (link) {
+            return hiddenLinks.indexOf(link.id) === -1;
+        });
 
         if (grouped) {
-            renderGrouped(cachedDevices, cachedLinks);
+            renderGrouped(cachedDevices, visibleLinks);
         } else {
-            renderIndividual(cachedDevices, cachedLinks);
+            renderIndividual(cachedDevices, visibleLinks);
         }
     }
 
@@ -430,6 +434,24 @@
             const tooltip   = `${a.count} enlace${a.count > 1 ? 's' : ''} | ${typeLabel} | ${synthLink.status.toUpperCase()} | ${a.max_utilization.toFixed(1)}%`;
             line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
             line.addTo(linkLayer);
+
+            // Traffic label at group-link midpoint (same rules as individual view)
+            if (a.in_bps > 0) {
+                const fromPx   = map.latLngToContainerPoint(from);
+                const toPx     = map.latLngToContainerPoint(to);
+                const pixelLen = Math.hypot(fromPx.x - toPx.x, fromPx.y - toPx.y);
+                if (pixelLen > 100) {
+                    const midLat    = (from.lat + to.lat) / 2;
+                    const midLng    = (from.lng + to.lng) / 2;
+                    const labelHtml = `\u2193${formatSpeedCompact(a.in_bps)} \u2191${formatSpeedCompact(a.out_bps)}`;
+                    const icon      = L.divIcon({
+                        className: '',
+                        html:      `<div class="netmap-link-label">${labelHtml}</div>`,
+                        iconAnchor: [0, 0]
+                    });
+                    L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                }
+            }
         });
     }
 

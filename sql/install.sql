@@ -33,7 +33,8 @@ INSERT IGNORE INTO `plugin_networkmap_settings` (`key`, `value`) VALUES
   ('refresh_interval',        '60'),
   ('zoom_threshold_cluster',  '18'),
   ('default_zoom',            'auto'),
-  ('tv_token',                '');
+  ('tv_token',                ''),
+  ('hidden_links',            '[]');
 
 -- ----------------------------------------------------------------------------
 -- Table 3: Traffic rate cache (translates SNMP octet counters to bps)
