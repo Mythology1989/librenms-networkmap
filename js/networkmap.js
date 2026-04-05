@@ -41,10 +41,11 @@
     // ── Leaflet map ──────────────────────────────────────────────────────
     let map;
     try {
-        map = L.map('netmap', {
+        map = L.map(config.mapId || 'netmap', {
             minZoom: 2,
             maxZoom: 18,
-            zoomControl: true
+            zoomControl:       !config.tvMode,
+            attributionControl: !config.tvMode
         }).setView([28.1, -15.4], 8); // fitBounds will override on first load
     } catch (e) {
         if (loadingEl) {
@@ -54,10 +55,17 @@
         return;
     }
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 18
-    }).addTo(map);
+    if (config.tvMode) {
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 18,
+            subdomains: 'abcd'
+        }).addTo(map);
+    } else {
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 18
+        }).addTo(map);
+    }
 
     // Layer groups — order matters: links bottom, link labels above, devices middle, labels top
     let linkLayer      = L.layerGroup().addTo(map);
@@ -504,7 +512,9 @@
   <ul style="padding-left:16px;margin:4px 0;">${deviceListHtml}</ul>
 </div>`;
 
-            circle.bindPopup(popupHtml, { className: 'netmap-popup' });
+            if (!config.tvMode) {
+                circle.bindPopup(popupHtml, { className: 'netmap-popup' });
+            }
             circle.addTo(deviceLayer);
 
             const labelIcon = L.divIcon({
@@ -558,8 +568,10 @@
 
             const typeLabel = gl.type === 'manual' ? 'Manual' : 'LLDP';
             const utilLabel = (gl.utilization_pct || 0) > 0 ? ` | ${gl.utilization_pct.toFixed(1)}%` : '';
-            const tooltip   = `${escapeHtml(gl.local_port)} \u2192 ${escapeHtml(gl.remote_port)}<br>${typeLabel} | ${(gl.status || 'unknown').toUpperCase()}${utilLabel}`;
-            line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
+            if (!config.tvMode) {
+                const tooltip = `${escapeHtml(gl.local_port)} \u2192 ${escapeHtml(gl.remote_port)}<br>${typeLabel} | ${(gl.status || 'unknown').toUpperCase()}${utilLabel}`;
+                line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
+            }
             line.addTo(linkLayer);
 
             // Traffic label at arc vertex (cpPx) — recomputed from pixels each render
@@ -572,7 +584,9 @@
                         html:      `<div class="netmap-link-label">${labelHtml}</div>`,
                         iconAnchor: [0, 0]
                     });
-                    const resolvedPx     = resolveLabel(cpPx, placedLabelPositions);
+                    const midChordPx     = L.point((fromContPx.x + toContPx.x) / 2, (fromContPx.y + toContPx.y) / 2);
+                    const arcVertexPx    = L.point((midChordPx.x + cpPx.x) / 2, (midChordPx.y + cpPx.y) / 2);
+                    const resolvedPx     = resolveLabel(arcVertexPx, placedLabelPositions);
                     const resolvedLatLng = map.containerPointToLatLng(resolvedPx);
                     L.marker([resolvedLatLng.lat, resolvedLatLng.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
                 }
@@ -642,7 +656,9 @@
   <a href="${escapeHtml(d.url)}" target="_blank">Ver en LibreNMS &rarr;</a>
 </div>`;
 
-            circle.bindPopup(popupHtml, { className: 'netmap-popup' });
+            if (!config.tvMode) {
+                circle.bindPopup(popupHtml, { className: 'netmap-popup' });
+            }
             circle.addTo(deviceLayer);
 
             const labelIcon = L.divIcon({
@@ -702,21 +718,22 @@
                 ? `<br>Rx &#8595;${formatSpeed(link.in_bps)} / Tx &#8593;${formatSpeed(link.out_bps)}`
                 : '';
             const tooltipText = `${escapeHtml(link.local_port)} &rarr; ${escapeHtml(link.remote_port)}<br>${typeLabel} | ${formatSpeed(link.speed_bps)} | ${statusLabel}${utilLabel}${trafficLabel}`;
-            line.bindTooltip(tooltipText, { className: 'netmap-link-tooltip', sticky: true });
+            if (!config.tvMode) {
+                line.bindTooltip(tooltipText, { className: 'netmap-link-tooltip', sticky: true });
 
-            const statusClass  = link.status === 'up' ? 'status-up' : 'status-down';
-            const trafficHtml  = (link.in_bps > 0 || link.out_bps > 0)
-                ? `<div>Tráfico: &#8595;${formatSpeed(link.in_bps)} / &#8593;${formatSpeed(link.out_bps)}</div>
+                const statusClass = link.status === 'up' ? 'status-up' : 'status-down';
+                const trafficHtml = (link.in_bps > 0 || link.out_bps > 0)
+                    ? `<div>Tráfico: &#8595;${formatSpeed(link.in_bps)} / &#8593;${formatSpeed(link.out_bps)}</div>
   <div>Utilización: ${link.utilization_pct.toFixed(1)}%</div>`
-                : '';
-            const popupHtml = `<div class="netmap-popup">
+                    : '';
+                const popupHtml = `<div class="netmap-popup">
   <h4>${escapeHtml(link.local_port)} &#9472;&#9472;&#9472;&#9472; ${escapeHtml(link.remote_port)}</h4>
   <div>Tipo: ${escapeHtml(typeLabel)}</div>
   <div>Velocidad: ${formatSpeed(link.speed_bps)}</div>
   <div>Estado: <span class="${statusClass}">${statusLabel}</span></div>
   ${trafficHtml}</div>`;
-
-            line.bindPopup(popupHtml, { className: 'netmap-popup' });
+                line.bindPopup(popupHtml, { className: 'netmap-popup' });
+            }
             line.addTo(linkLayer);
 
             // Always-visible traffic label at arc vertex (cpPx) — recomputed from pixels each render
@@ -728,7 +745,9 @@
                     html: `<div class="netmap-link-label">${labelHtml}</div>`,
                     iconAnchor: [0, 0]
                 });
-                const resolvedPx     = resolveLabel(cpPx, placedLabelPositions);
+                const midChordPx     = L.point((fromContPx.x + toContPx.x) / 2, (fromContPx.y + toContPx.y) / 2);
+                const arcVertexPx    = L.point((midChordPx.x + cpPx.x) / 2, (midChordPx.y + cpPx.y) / 2);
+                const resolvedPx     = resolveLabel(arcVertexPx, placedLabelPositions);
                 const resolvedLatLng = map.containerPointToLatLng(resolvedPx);
                 L.marker([resolvedLatLng.lat, resolvedLatLng.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
             }
@@ -758,36 +777,60 @@
         showLoading();
 
         try {
-            const [devicesResponse, linksResponse] = await Promise.all([
-                fetch(config.apiDevices, { credentials: 'same-origin' }),
-                fetch(config.apiLinks,   { credentials: 'same-origin' })
-            ]);
+            if (config.tvMode) {
+                const response = await fetch(config.tvApiUrl);
+                if (!response.ok) {
+                    throw new Error(`TV API returned ${response.status}`);
+                }
+                const data = await response.json();
+                cachedDevices = data.devices || [];
+                cachedLinks   = data.links   || [];
 
-            if (!devicesResponse.ok) {
-                throw new Error(`Devices API returned ${devicesResponse.status}`);
-            }
-            if (!linksResponse.ok) {
-                throw new Error(`Links API returned ${linksResponse.status}`);
-            }
+                renderAll();
 
-            const devicesData = await devicesResponse.json();
-            const linksData   = await linksResponse.json();
+                if (isFirstLoad && cachedDevices.length > 0) {
+                    const bounds = L.latLngBounds(
+                        cachedDevices.map(function (d) { return [d.lat, d.lng]; })
+                    );
+                    map.fitBounds(bounds, { padding: [40, 40] });
+                    isFirstLoad = false;
+                }
 
-            cachedDevices = devicesData.devices || [];
-            cachedLinks   = linksData.links     || [];
+                if (typeof config.onTvDataLoaded === 'function') {
+                    config.onTvDataLoaded(data);
+                }
+            } else {
+                const [devicesResponse, linksResponse] = await Promise.all([
+                    fetch(config.apiDevices, { credentials: 'same-origin' }),
+                    fetch(config.apiLinks,   { credentials: 'same-origin' })
+                ]);
 
-            renderAll();
+                if (!devicesResponse.ok) {
+                    throw new Error(`Devices API returned ${devicesResponse.status}`);
+                }
+                if (!linksResponse.ok) {
+                    throw new Error(`Links API returned ${linksResponse.status}`);
+                }
 
-            if (isFirstLoad && cachedDevices.length > 0) {
-                const bounds = L.latLngBounds(
-                    cachedDevices.map(function (d) { return [d.lat, d.lng]; })
-                );
-                map.fitBounds(bounds, { padding: [40, 40], maxZoom: config.zoomThreshold - 1 });
-                map.setMinZoom(10);
-                map.once('moveend', function () {
-                    if (map.getZoom() < 11) { map.setZoom(12); }
-                });
-                isFirstLoad = false;
+                const devicesData = await devicesResponse.json();
+                const linksData   = await linksResponse.json();
+
+                cachedDevices = devicesData.devices || [];
+                cachedLinks   = linksData.links     || [];
+
+                renderAll();
+
+                if (isFirstLoad && cachedDevices.length > 0) {
+                    const bounds = L.latLngBounds(
+                        cachedDevices.map(function (d) { return [d.lat, d.lng]; })
+                    );
+                    map.fitBounds(bounds, { padding: [40, 40], maxZoom: config.zoomThreshold - 1 });
+                    map.setMinZoom(10);
+                    map.once('moveend', function () {
+                        if (map.getZoom() < 11) { map.setZoom(12); }
+                    });
+                    isFirstLoad = false;
+                }
             }
         } catch (err) {
             console.error('[NetworkMap] Error loading data:', err);

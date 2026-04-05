@@ -146,8 +146,6 @@ if (!empty($hidden_links_tv)) {
     }));
 }
 
-$links_json = json_encode($links_arr, JSON_UNESCAPED_UNICODE);
-
 // JSON-only soft-refresh endpoint: ?view=tv&token=...&format=json
 if (request()->query('format', '') === 'json') {
     header('Content-Type: application/json');
@@ -159,6 +157,11 @@ if (request()->query('format', '') === 'json') {
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
+$hidden_links_json  = json_encode($hidden_links_tv, JSON_UNESCAPED_UNICODE);
+$link_priorities_raw = netmap_get_setting('link_priorities', '[]');
+$link_priorities_json = json_encode(json_decode($link_priorities_raw, true) ?: [], JSON_UNESCAPED_UNICODE);
+$tv_api_url = '/plugin/v1/NetworkMap?view=tv&token=' . urlencode($token) . '&format=json';
+$zoom_threshold = (int) netmap_get_setting('zoom_threshold', 13);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -170,6 +173,7 @@ if (request()->query('format', '') === 'json') {
       id="leaflet-css-cdn">
 <link rel="stylesheet" href="/plugins/NetworkMap/css/leaflet.min.css"
       id="leaflet-css-local" disabled>
+<link rel="stylesheet" href="/plugins/NetworkMap/css/networkmap.css">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
@@ -205,29 +209,6 @@ html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
     font-family: monospace;
     font-size: 13px;
 }
-
-.tv-label {
-    font-size: 11px;
-    font-weight: bold;
-    color: #fff;
-    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
-    white-space: nowrap;
-    pointer-events: none;
-    margin-top: 4px;
-}
-
-.netmap-link-label {
-    font-size: 13px;
-    font-weight: bold;
-    color: #fff;
-    background: rgba(0, 0, 0, 0.85);
-    border-radius: 3px;
-    padding: 3px 6px;
-    white-space: nowrap;
-    pointer-events: none;
-    transform: translate(-50%, -50%);
-    display: inline-block;
-}
 </style>
 </head>
 <body>
@@ -257,191 +238,32 @@ if (typeof L === 'undefined') {
 }
 </script>
 <script>
-(function () {
-    'use strict';
-
-    var TV_TOKEN   = <?= json_encode($token) ?>;
-    var REFRESH_MS = <?= $refresh_ms ?>;
-    var JSON_URL   = '/plugin/v1/NetworkMap?view=tv&token=' + encodeURIComponent(TV_TOKEN) + '&format=json';
-
-    var map = L.map('tv-map', {
-        minZoom: 2,
-        maxZoom: 18,
-        zoomControl: false,
-        attributionControl: false
-    }).setView([28.1, -15.4], 8);
-
-    // Dark tile layer for TV/NOC mode
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 18,
-        subdomains: 'abcd'
-    }).addTo(map);
-
-    // Layer groups: links → link labels → devices
-    var linkLayer      = L.layerGroup().addTo(map);
-    var linkLabelLayer = L.layerGroup().addTo(map);
-    var deviceLayer    = L.layerGroup().addTo(map);
-
-    var tvFirstLoad = true;
-
-    // Compact speed format for always-visible link labels: "12M", "450K", "1.2G"
-    function formatSpeedCompact(bps) {
-        if (bps >= 1e9) { return (bps / 1e9).toFixed(1) + 'G'; }
-        if (bps >= 1e6) { return (bps / 1e6).toFixed(0) + 'M'; }
-        if (bps >= 1e3) { return (bps / 1e3).toFixed(0) + 'K'; }
-        return bps + 'b';
-    }
-
-    function escapeHtml(str) {
-        if (str == null) { return ''; }
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-
-    function deviceColor(d) {
-        if (d.status === 1) { return '#2ecc71'; }
-        if (d.status === 0) { return '#e74c3c'; }
-        return '#95a5a6';
-    }
-
-    // Link color: manual=blue, down=red, ≥80%=red, ≥50%=orange, up<50%=green
-    function linkColor(link) {
-        if (link.type === 'manual')                           { return '#3498db'; }
-        if (link.status === 'down')                           { return '#e74c3c'; }
-        if ((link.utilization_pct || 0) >= 80)               { return '#e74c3c'; }
-        if ((link.utilization_pct || 0) >= 50)               { return '#f39c12'; }
-        if (link.status === 'up')                             { return '#2ecc71'; }
-        return '#95a5a6';
-    }
-
-    // Logarithmic weight: 0%→1px, 100%→8px
-    function linkWeight(pct) {
-        if (!pct || pct <= 0) { return 1; }
-        var clamped = Math.min(pct, 100);
-        return Math.max(1, Math.min(8, 1 + 7 * Math.log(1 + clamped) / Math.log(101)));
-    }
-
-    function renderMap(devices, links) {
-        linkLayer.clearLayers();
-        linkLabelLayer.clearLayers();
-        deviceLayer.clearLayers();
-
-        // Build device coordinate lookup for link rendering
-        var deviceCoords = {};
-        devices.forEach(function (d) { deviceCoords[d.id] = [d.lat, d.lng]; });
-
-        // Pre-pass: for each canonical device pair, keep the link with highest in_bps.
-        var bestLabelLink = {};
-        links.forEach(function (link) {
-            if (!link.in_bps || link.in_bps <= 0) { return; }
-            var a = link.local_device_id, b = link.remote_device_id;
-            var pairKey = Math.min(a, b) + '-' + Math.max(a, b);
-            if (!bestLabelLink[pairKey] || link.in_bps > bestLabelLink[pairKey].in_bps) {
-                bestLabelLink[pairKey] = link;
-            }
-        });
-
-        // Draw link polylines (below devices)
-        links.forEach(function (link) {
-            var from = deviceCoords[link.local_device_id];
-            var to   = deviceCoords[link.remote_device_id];
-            if (!from || !to) { return; }
-            var opts = {
-                color:       linkColor(link),
-                weight:      linkWeight(link.utilization_pct || 0),
-                opacity:     0.55,
-                interactive: false
-            };
-            if (link.type === 'manual') { opts.dashArray = '6, 4'; }
-            L.polyline([from, to], opts).addTo(linkLayer);
-
-            // Always-visible traffic label at midpoint — only if bps > 0, link is
-            // long enough (>100 px) and this link has the highest in_bps for this pair.
-            if (link.in_bps > 0) {
-                var a2 = link.local_device_id, b2 = link.remote_device_id;
-                var pairKey = Math.min(a2, b2) + '-' + Math.max(a2, b2);
-                if (bestLabelLink[pairKey] === link) {
-                    var fromPx   = map.latLngToContainerPoint(from);
-                    var toPx     = map.latLngToContainerPoint(to);
-                    var pixelLen = Math.sqrt(Math.pow(fromPx.x - toPx.x, 2) + Math.pow(fromPx.y - toPx.y, 2));
-                    if (pixelLen > 100) {
-                        var midLat  = (from[0] + to[0]) / 2;
-                        var midLng  = (from[1] + to[1]) / 2;
-                        var lblHtml = '\u2193' + formatSpeedCompact(link.in_bps) + ' \u2191' + formatSpeedCompact(link.out_bps);
-                        var icon    = L.divIcon({
-                            className: '',
-                            html: '<div class="netmap-link-label">' + lblHtml + '</div>',
-                            iconAnchor: [0, 0]
-                        });
-                        L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
-                    }
-                }
-            }
-        });
-
-        // Render device circles and labels
-        devices.forEach(function (d) {
-            L.circleMarker([d.lat, d.lng], {
-                radius: 8,
-                fillColor: deviceColor(d),
-                fillOpacity: 0.85,
-                weight: 2,
-                color: '#fff',
-                interactive: false
-            }).addTo(deviceLayer);
-
-            var labelIcon = L.divIcon({
-                className: '',
-                html: '<div class="tv-label">' + escapeHtml(d.display_name) + '</div>',
-                iconAnchor: [0, 0]
-            });
-            L.marker([d.lat, d.lng], { icon: labelIcon, interactive: false }).addTo(deviceLayer);
-        });
-
-        // Fit bounds only on first load — preserve user pan/zoom on refresh
-        if (tvFirstLoad && devices.length > 0) {
-            var bounds = L.latLngBounds(devices.map(function (d) { return [d.lat, d.lng]; }));
-            map.fitBounds(bounds, { padding: [40, 40] });
-            tvFirstLoad = false;
-        }
-    }
-
-    function updateStatus(upCount, downCount) {
+window.netmapConfig = {
+    tvMode:          true,
+    mapId:           'tv-map',
+    tvApiUrl:        <?= json_encode($tv_api_url) ?>,
+    refreshInterval: <?= max(10, (int) netmap_get_setting('refresh_interval', 60)) ?>,
+    zoomThreshold:   <?= $zoom_threshold ?>,
+    hiddenLinks:     <?= $hidden_links_json ?>,
+    linkPriorities:  <?= $link_priorities_json ?>,
+    onTvDataLoaded: function (data) {
         var upEl   = document.querySelector('#tv-status .up');
         var downEl = document.querySelector('#tv-status .down');
-        if (upEl)   { upEl.textContent   = 'UP: '   + upCount; }
-        if (downEl) { downEl.textContent = 'DOWN: ' + downCount; }
+        if (upEl)   { upEl.textContent   = 'UP: '   + (data.up_count   || 0); }
+        if (downEl) { downEl.textContent = 'DOWN: ' + (data.down_count || 0); }
+        var tsEl = document.getElementById('tv-timestamp');
+        if (tsEl) {
+            tsEl.textContent = 'Actualizado: ' + new Date().toTimeString().slice(0, 8);
+        }
     }
-
-    function updateTimestamp() {
-        var now = new Date();
-        document.getElementById('tv-timestamp').textContent =
-            'Actualizado: ' + now.toTimeString().slice(0, 8);
-    }
-
-    function softRefresh() {
-        fetch(JSON_URL)
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                renderMap(data.devices || [], data.links || []);
-                updateStatus(data.up_count || 0, data.down_count || 0);
-                updateTimestamp();
-            })
-            .catch(function () { /* silent fail — try next interval */ });
-    }
-
-    // Initial render from server-side embedded data (no network request on first load)
-    var devices = <?= $devices_json ?>;
-    var links   = <?= $links_json; ?>;
-    renderMap(devices, links);
-    updateTimestamp();
-
-    // Soft refresh at configured interval (no page reload — no flash)
-    setInterval(softRefresh, REFRESH_MS);
+};
+</script>
+<script src="/plugins/NetworkMap/js/networkmap.js"></script>
+<script>
+// Update timestamp on initial load (networkmap.js fires onTvDataLoaded only after first fetch)
+(function () {
+    var tsEl = document.getElementById('tv-timestamp');
+    if (tsEl) { tsEl.textContent = 'Actualizado: ' + new Date().toTimeString().slice(0, 8); }
 })();
 </script>
 </body>
