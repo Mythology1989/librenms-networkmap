@@ -161,7 +161,7 @@ $hidden_links_json  = json_encode($hidden_links_tv, JSON_UNESCAPED_UNICODE);
 $link_priorities_raw = netmap_get_setting('link_priorities', '[]');
 $link_priorities_json = json_encode(json_decode($link_priorities_raw, true) ?: [], JSON_UNESCAPED_UNICODE);
 $tv_api_url = '/plugin/v1/NetworkMap?view=tv&token=' . urlencode($token) . '&format=json';
-$zoom_threshold = (int) netmap_get_setting('zoom_threshold', 13);
+$zoom_threshold = (int) netmap_get_setting('zoom_threshold_cluster', 18);
 ?>
 <!DOCTYPE html>
 <html lang="es">
