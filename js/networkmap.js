@@ -174,6 +174,44 @@
         return Math.max(1, Math.min(8, 1 + 7 * Math.log(1 + clamped) / Math.log(101)));
     }
 
+    /**
+     * Lateral pixel offset for the nth parallel link between the same device pair.
+     * idx=0 → 0px (straight), idx=1 → +15px, idx=2 → -15px, idx=3 → +30px, …
+     *
+     * @param {number} idx  zero-based index within the parallel link group
+     * @returns {number}    signed pixel offset
+     */
+    function linkOffset(idx) {
+        if (idx === 0) { return 0; }
+        const step = Math.ceil(idx / 2) * 15;
+        return (idx % 2 === 1) ? step : -step;
+    }
+
+    /**
+     * Displace both endpoints of a link by offsetPx pixels perpendicular to the
+     * link direction using screen-space math. Returns new {from, to} LatLng objects.
+     *
+     * @param {L.LatLng} from
+     * @param {L.LatLng} to
+     * @param {number}   offsetPx  signed pixel offset (0 = no change)
+     * @returns {{ from: L.LatLng, to: L.LatLng }}
+     */
+    function applyLinkOffset(from, to, offsetPx) {
+        if (offsetPx === 0) { return { from: from, to: to }; }
+        const fromPx = map.latLngToContainerPoint(from);
+        const toPx   = map.latLngToContainerPoint(to);
+        const dx = toPx.x - fromPx.x;
+        const dy = toPx.y - fromPx.y;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) { return { from: from, to: to }; }
+        const px = -dy / len;
+        const py =  dx / len;
+        return {
+            from: map.containerPointToLatLng(L.point(fromPx.x + px * offsetPx, fromPx.y + py * offsetPx)),
+            to:   map.containerPointToLatLng(L.point(toPx.x   + px * offsetPx, toPx.y   + py * offsetPx))
+        };
+    }
+
     // ── Haversine distance ───────────────────────────────────────────────
 
     /**
@@ -522,6 +560,18 @@
             L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
         });
 
+        // Pre-pass: assign a per-pair index to each link for lateral offset calculation.
+        // Links are indexed in API order within each device pair.
+        const pairLinkIndex = {}; // linkId → zero-based index within its device pair
+        const pairLinkCount = {}; // pairKey → running count
+        links.forEach(function (link) {
+            if (!deviceCoords[link.local_device_id] || !deviceCoords[link.remote_device_id]) { return; }
+            const pk = Math.min(link.local_device_id, link.remote_device_id) + '-' +
+                       Math.max(link.local_device_id, link.remote_device_id);
+            if (pairLinkCount[pk] === undefined) { pairLinkCount[pk] = 0; }
+            pairLinkIndex[link.id] = pairLinkCount[pk]++;
+        });
+
         // Pre-pass: for each canonical device pair, keep the link with highest in_bps.
         // This prevents label overlap when multiple LLDP links run between the same two devices.
         const bestLabelLink = {};
@@ -540,6 +590,12 @@
             const to   = deviceCoords[link.remote_device_id];
             if (!from || !to) { return; }
 
+            // Compute lateral offset for parallel links between the same device pair
+            const pairKey  = Math.min(link.local_device_id, link.remote_device_id) + '-' +
+                             Math.max(link.local_device_id, link.remote_device_id);
+            const idx      = pairLinkIndex[link.id] || 0;
+            const { from: drawFrom, to: drawTo } = applyLinkOffset(from, to, linkOffset(idx));
+
             const opts = {
                 color:   linkColor(link),
                 weight:  linkWeight(link.utilization_pct || 0),
@@ -547,7 +603,7 @@
             };
             if (link.type === 'manual') { opts.dashArray = '6, 4'; }
 
-            const line = L.polyline([from, to], opts);
+            const line = L.polyline([drawFrom, drawTo], opts);
 
             const statusLabel = (link.status || 'unknown').toUpperCase();
             const typeLabel   = link.type === 'manual' ? 'Manual' : 'LLDP';
@@ -575,18 +631,15 @@
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);
 
-            // Always-visible traffic label at the link midpoint (individual view only).
+            // Always-visible traffic label at the offset midpoint (individual view only).
             // Only render if: in_bps > 0, zoom >= 12, pixel length > 100px, and this
-            // link has the highest in_bps for this device pair (prevents overlap on
-            // parallel links between the same two devices).
-            const fromPx   = map.latLngToContainerPoint(from);
-            const toPx     = map.latLngToContainerPoint(to);
+            // link has the highest in_bps for this device pair (prevents label overlap).
+            const fromPx   = map.latLngToContainerPoint(drawFrom);
+            const toPx     = map.latLngToContainerPoint(drawTo);
             const pixelLen = Math.hypot(fromPx.x - toPx.x, fromPx.y - toPx.y);
-            const pairKey  = Math.min(link.local_device_id, link.remote_device_id) + '-' +
-                             Math.max(link.local_device_id, link.remote_device_id);
             if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100 && bestLabelLink[pairKey] === link) {
-                const midLat = (from.lat + to.lat) / 2;
-                const midLng = (from.lng + to.lng) / 2;
+                const midLat = (drawFrom.lat + drawTo.lat) / 2;
+                const midLng = (drawFrom.lng + drawTo.lng) / 2;
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
                 const icon = L.divIcon({
                     className: '',
