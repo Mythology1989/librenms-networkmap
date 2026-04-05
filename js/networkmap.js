@@ -176,15 +176,18 @@
 
     /**
      * Signed pixel offset for the Bezier control point of the nth parallel link.
-     * idx=0 → 0, idx=1 → +40, idx=2 → -40, idx=3 → +80, idx=4 → -80, …
+     * Base = max(60, distPx * 0.15) — guarantees minimum curvature at any zoom.
+     * idx=0 → 0, idx=1 → +base, idx=2 → -base, idx=3 → +2*base, …
      *
-     * @param {number} idx  zero-based index within the parallel link group
-     * @returns {number}    signed pixel offset for the control point
+     * @param {number} idx     zero-based index within the parallel link group
+     * @param {number} distPx  screen-space distance between the two endpoints
+     * @returns {number}       signed pixel offset for the control point
      */
-    function bezierOffset(idx) {
+    function bezierOffset(idx, distPx) {
         if (idx === 0) { return 0; }
         const mult = Math.ceil(idx / 2);
-        return (idx % 2 === 1) ? 40 * mult : -(40 * mult);
+        const base = Math.max(60, distPx * 0.15);
+        return (idx % 2 === 1) ? base * mult : -(base * mult);
     }
 
     /**
@@ -534,7 +537,10 @@
                 : gl.to_group   + '_' + gl.from_group;
             const idx        = grpPairIndex[gl.id] || 0;
             const pairTotal  = grpPairCount[pk] || 1;
-            const offsetPx   = pairTotal > 1 ? bezierOffset(idx) : 0;
+            const fromContPx = map.latLngToContainerPoint(from);
+            const toContPx   = map.latLngToContainerPoint(to);
+            const distPx     = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
+            const offsetPx   = pairTotal > 1 ? bezierOffset(idx, distPx) : 0;
             const cp         = bezierControlPoint(from, to, offsetPx);
             const linePoints = pairTotal > 1 ? bezierPoints(from, to, cp) : [from, to];
 
@@ -555,9 +561,7 @@
 
             // Traffic label at Bezier control point — one per link, collision-resolved
             if (gl.in_bps > 0) {
-                const fromContPx = map.latLngToContainerPoint(from);
-                const toContPx   = map.latLngToContainerPoint(to);
-                const pixelLen   = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
+                const pixelLen = distPx;
                 if (pixelLen > 100) {
                     const labelHtml  = `\u2193${formatSpeedCompact(gl.in_bps)} \u2191${formatSpeedCompact(gl.out_bps)}`;
                     const icon       = L.divIcon({
@@ -670,7 +674,10 @@
                                Math.max(link.local_device_id, link.remote_device_id);
             const idx        = pairLinkIndex[link.id] || 0;
             const pairTotal  = pairLinkCount[pairKey] || 1;
-            const offsetPx   = pairTotal > 1 ? bezierOffset(idx) : 0;
+            const fromContPx = map.latLngToContainerPoint(from);
+            const toContPx   = map.latLngToContainerPoint(to);
+            const distPx     = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
+            const offsetPx   = pairTotal > 1 ? bezierOffset(idx, distPx) : 0;
             const cp         = bezierControlPoint(from, to, offsetPx);
             const linePoints = pairTotal > 1 ? bezierPoints(from, to, cp) : [from, to];
 
@@ -710,9 +717,7 @@
             line.addTo(linkLayer);
 
             // Always-visible traffic label at Bezier control point — one per link, collision-resolved
-            const fromContPx = map.latLngToContainerPoint(from);
-            const toContPx   = map.latLngToContainerPoint(to);
-            const pixelLen   = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
+            const pixelLen = distPx;
             if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100) {
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
                 const icon = L.divIcon({
