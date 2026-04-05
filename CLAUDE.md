@@ -173,6 +173,16 @@ El nombre que se muestra para cada dispositivo sigue esta jerarquía:
 Para cambiar el nombre: ir a la pestaña **Configuración** del plugin → sección "Nombres en el mapa".
 El campo `d.display` se configura en LibreNMS → [dispositivo] → Edit → campo "Display Name".
 
+## Limitaciones conocidas (v1.0)
+- **Solapamiento de enlaces entre pares distintos**: el offset lateral solo
+  separa enlaces paralelos entre el *mismo* par de nodos/grupos. Si dos
+  polylines de pares distintos se cruzan o solapan visualmente, no hay
+  corrección automática — requeriría un algoritmo de layout de grafo completo
+  que está fuera de alcance para v1.0.
+- **Offset adaptativo**: `step = max(20, 100 - distPx * 0.5)`. Para nodos
+  muy cercanos (< 50px) el offset puede llegar a 75px y parecer excesivo;
+  ajustar la constante 100 o el multiplicador 0.5 si hace falta.
+
 ## Convenciones
 - Commits: `tipo(scope): mensaje` — feat, fix, chore, docs, refactor
 - PHP: PSR-12 básico. Indentación 4 espacios

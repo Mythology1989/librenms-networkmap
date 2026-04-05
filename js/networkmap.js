@@ -175,16 +175,18 @@
     }
 
     /**
-     * Lateral pixel offset for the nth parallel link between the same device pair.
-     * idx=0 → 0px (straight), idx=1 → +15px, idx=2 → -15px, idx=3 → +30px, …
+     * Lateral pixel offset for the nth parallel link between the same node pair.
+     * idx=0 → 0, idx=1 → +step, idx=2 → -step, idx=3 → +2*step, …
+     * step is adaptive: max(20, 100 - distPx * 0.5) so nearby nodes separate more.
      *
-     * @param {number} idx  zero-based index within the parallel link group
-     * @returns {number}    signed pixel offset
+     * @param {number} idx   zero-based index within the parallel link group
+     * @param {number} step  base offset in pixels (≥ 20)
+     * @returns {number}     signed pixel offset
      */
-    function linkOffset(idx) {
+    function linkOffset(idx, step) {
         if (idx === 0) { return 0; }
-        const step = Math.ceil(idx / 2) * 15;
-        return (idx % 2 === 1) ? step : -step;
+        const mult = Math.ceil(idx / 2);
+        return (idx % 2 === 1) ? step * mult : -(step * mult);
     }
 
     /**
@@ -337,6 +339,26 @@
         });
     }
 
+    /**
+     * Returns ALL inter-group links with from_group / to_group properties added.
+     * Unlike aggregateLinks, every link is preserved (not collapsed to one per pair).
+     * Intra-group links (both endpoints in the same group) are discarded.
+     *
+     * @param {Array}  links
+     * @param {Object} deviceToGroup  — { deviceId: groupId }
+     * @returns {Array}
+     */
+    function groupLinks(links, deviceToGroup) {
+        const result = [];
+        links.forEach(function (link) {
+            const fg = deviceToGroup[link.local_device_id];
+            const tg = deviceToGroup[link.remote_device_id];
+            if (!fg || !tg || fg === tg) { return; }
+            result.push(Object.assign({}, link, { from_group: fg, to_group: tg }));
+        });
+        return result;
+    }
+
     // ── Loading overlay ──────────────────────────────────────────────────
 
     function showLoading() {
@@ -446,36 +468,71 @@
             L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
         });
 
-        // Render aggregated inter-group links
-        const aggLinks = aggregateLinks(links, deviceToGroup);
-        aggLinks.forEach(function (a) {
-            const from = coordMap[a.from_group];
-            const to   = coordMap[a.to_group];
+        // All inter-group links with offsets (one polyline per original link)
+        const grpLinks = groupLinks(links, deviceToGroup);
+
+        // Pre-pass: assign per-pair index for lateral offset
+        const grpPairIndex = {};
+        const grpPairCount = {};
+        grpLinks.forEach(function (gl) {
+            const pk = gl.from_group < gl.to_group
+                ? gl.from_group + '_' + gl.to_group
+                : gl.to_group   + '_' + gl.from_group;
+            if (grpPairCount[pk] === undefined) { grpPairCount[pk] = 0; }
+            grpPairIndex[gl.id] = grpPairCount[pk]++;
+        });
+
+        // Pre-pass: best-bps link per group pair for traffic label
+        const grpBestLabel = {};
+        grpLinks.forEach(function (gl) {
+            if (!gl.in_bps || gl.in_bps <= 0) { return; }
+            const pk = gl.from_group < gl.to_group
+                ? gl.from_group + '_' + gl.to_group
+                : gl.to_group   + '_' + gl.from_group;
+            if (!grpBestLabel[pk] || gl.in_bps > grpBestLabel[pk].in_bps) {
+                grpBestLabel[pk] = gl;
+            }
+        });
+
+        grpLinks.forEach(function (gl) {
+            const from = coordMap[gl.from_group];
+            const to   = coordMap[gl.to_group];
             if (!from || !to) { return; }
 
+            const pk     = gl.from_group < gl.to_group
+                ? gl.from_group + '_' + gl.to_group
+                : gl.to_group   + '_' + gl.from_group;
+            const idx    = grpPairIndex[gl.id] || 0;
+            const rawFromPx = map.latLngToContainerPoint(from);
+            const rawToPx   = map.latLngToContainerPoint(to);
+            const distPx    = Math.hypot(rawFromPx.x - rawToPx.x, rawFromPx.y - rawToPx.y);
+            const step      = Math.max(20, 100 - distPx * 0.5);
+            const { from: drawFrom, to: drawTo } = applyLinkOffset(from, to, linkOffset(idx, step));
+
             const opts = {
-                color:   linkColor(a),
-                weight:  linkWeight(a.utilization_pct),
+                color:   linkColor(gl),
+                weight:  linkWeight(gl.utilization_pct || 0),
                 opacity: 0.7
             };
-            if (a.type === 'manual') { opts.dashArray = '6, 4'; }
+            if (gl.type === 'manual') { opts.dashArray = '6, 4'; }
 
-            const line = L.polyline([from, to], opts);
+            const line = L.polyline([drawFrom, drawTo], opts);
 
-            const typeLabel = a.type === 'manual' ? 'Manual' : 'LLDP';
-            const tooltip   = `${a.count} enlace${a.count > 1 ? 's' : ''} | ${typeLabel} | ${a.status.toUpperCase()} | ${a.utilization_pct.toFixed(1)}%`;
+            const typeLabel = gl.type === 'manual' ? 'Manual' : 'LLDP';
+            const utilLabel = (gl.utilization_pct || 0) > 0 ? ` | ${gl.utilization_pct.toFixed(1)}%` : '';
+            const tooltip   = `${escapeHtml(gl.local_port)} \u2192 ${escapeHtml(gl.remote_port)}<br>${typeLabel} | ${(gl.status || 'unknown').toUpperCase()}${utilLabel}`;
             line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
             line.addTo(linkLayer);
 
-            // Traffic label at group-link midpoint (same rules as individual view)
-            if (a.in_bps > 0) {
-                const fromPx   = map.latLngToContainerPoint(from);
-                const toPx     = map.latLngToContainerPoint(to);
-                const pixelLen = Math.hypot(fromPx.x - toPx.x, fromPx.y - toPx.y);
+            // Traffic label at offset midpoint — only for best-bps link in this group pair
+            if (gl.in_bps > 0 && grpBestLabel[pk] === gl) {
+                const drawFromPx = map.latLngToContainerPoint(drawFrom);
+                const drawToPx   = map.latLngToContainerPoint(drawTo);
+                const pixelLen   = Math.hypot(drawFromPx.x - drawToPx.x, drawFromPx.y - drawToPx.y);
                 if (pixelLen > 100) {
-                    const midLat    = (from.lat + to.lat) / 2;
-                    const midLng    = (from.lng + to.lng) / 2;
-                    const labelHtml = `\u2193${formatSpeedCompact(a.in_bps)} \u2191${formatSpeedCompact(a.out_bps)}`;
+                    const midLat    = (drawFrom.lat + drawTo.lat) / 2;
+                    const midLng    = (drawFrom.lng + drawTo.lng) / 2;
+                    const labelHtml = `\u2193${formatSpeedCompact(gl.in_bps)} \u2191${formatSpeedCompact(gl.out_bps)}`;
                     const icon      = L.divIcon({
                         className: '',
                         html:      `<div class="netmap-link-label">${labelHtml}</div>`,
@@ -591,10 +648,14 @@
             if (!from || !to) { return; }
 
             // Compute lateral offset for parallel links between the same device pair
-            const pairKey  = Math.min(link.local_device_id, link.remote_device_id) + '-' +
-                             Math.max(link.local_device_id, link.remote_device_id);
-            const idx      = pairLinkIndex[link.id] || 0;
-            const { from: drawFrom, to: drawTo } = applyLinkOffset(from, to, linkOffset(idx));
+            const pairKey    = Math.min(link.local_device_id, link.remote_device_id) + '-' +
+                               Math.max(link.local_device_id, link.remote_device_id);
+            const idx        = pairLinkIndex[link.id] || 0;
+            const rawFromPx  = map.latLngToContainerPoint(from);
+            const rawToPx    = map.latLngToContainerPoint(to);
+            const distPx     = Math.hypot(rawFromPx.x - rawToPx.x, rawFromPx.y - rawToPx.y);
+            const step       = Math.max(20, 100 - distPx * 0.5);
+            const { from: drawFrom, to: drawTo } = applyLinkOffset(from, to, linkOffset(idx, step));
 
             const opts = {
                 color:   linkColor(link),
