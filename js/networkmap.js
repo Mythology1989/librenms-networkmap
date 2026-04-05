@@ -191,47 +191,50 @@
     }
 
     /**
-     * Compute the Bezier control point: the midpoint displaced perpendicularly
-     * by offsetPx pixels in screen space, then converted back to LatLng.
+     * Compute the Bezier control point entirely in screen space.
+     * Takes pre-computed pixel coordinates; returns an L.Point.
+     * Keeping everything in pixels means the arc vertex is always correct
+     * regardless of zoom level — no LatLng round-trip error.
      *
-     * @param {L.LatLng} from
-     * @param {L.LatLng} to
-     * @param {number}   offsetPx  signed pixel displacement (0 = straight midpoint)
-     * @returns {L.LatLng}         control point position
+     * @param {L.Point} fromPx   start point in container pixels
+     * @param {L.Point} toPx     end point in container pixels
+     * @param {number}  offsetPx signed perpendicular displacement (0 = midpoint)
+     * @returns {L.Point}        control point in container pixels
      */
-    function bezierControlPoint(from, to, offsetPx) {
-        const fromPx = map.latLngToContainerPoint(from);
-        const toPx   = map.latLngToContainerPoint(to);
+    function bezierControlPx(fromPx, toPx, offsetPx) {
         const mx = (fromPx.x + toPx.x) / 2;
         const my = (fromPx.y + toPx.y) / 2;
-        if (offsetPx === 0) { return map.containerPointToLatLng(L.point(mx, my)); }
+        if (offsetPx === 0) { return L.point(mx, my); }
         const dx  = toPx.x - fromPx.x;
         const dy  = toPx.y - fromPx.y;
         const len = Math.hypot(dx, dy);
-        if (len === 0) { return map.containerPointToLatLng(L.point(mx, my)); }
+        if (len === 0) { return L.point(mx, my); }
         const px = -dy / len; // perpendicular unit vector
         const py =  dx / len;
-        return map.containerPointToLatLng(L.point(mx + px * offsetPx, my + py * offsetPx));
+        return L.point(mx + px * offsetPx, my + py * offsetPx);
     }
 
     /**
      * Generate 11 LatLng points along a quadratic Bezier curve.
      * P(t) = (1-t)²·p1 + 2(1-t)t·cp + t²·p2,  t ∈ [0,1]
      *
-     * @param {L.LatLng} p1  start point
-     * @param {L.LatLng} p2  end point
-     * @param {L.LatLng} cp  control point (displaced midpoint)
-     * @returns {L.LatLng[]} 11 points including both endpoints
+     * All interpolation happens in screen space so the arc shape is
+     * consistent at any zoom level. Each pixel point is converted to
+     * LatLng only at the end for use by L.Polyline.
+     *
+     * @param {L.Point} fromPx  start point in container pixels
+     * @param {L.Point} toPx    end point in container pixels
+     * @param {L.Point} cpPx    control point in container pixels
+     * @returns {L.LatLng[]}    11 points including both endpoints
      */
-    function bezierPoints(p1, p2, cp) {
+    function bezierPoints(fromPx, toPx, cpPx) {
         const pts = [];
         for (let i = 0; i <= 10; i++) {
             const t  = i / 10;
             const t1 = 1 - t;
-            pts.push(L.latLng(
-                t1 * t1 * p1.lat + 2 * t1 * t * cp.lat + t * t * p2.lat,
-                t1 * t1 * p1.lng + 2 * t1 * t * cp.lng + t * t * p2.lng
-            ));
+            const x  = t1 * t1 * fromPx.x + 2 * t1 * t * cpPx.x + t * t * toPx.x;
+            const y  = t1 * t1 * fromPx.y + 2 * t1 * t * cpPx.y + t * t * toPx.y;
+            pts.push(map.containerPointToLatLng(L.point(x, y)));
         }
         return pts;
     }
@@ -541,8 +544,8 @@
             const toContPx   = map.latLngToContainerPoint(to);
             const distPx     = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
             const offsetPx   = pairTotal > 1 ? bezierOffset(idx, distPx) : 0;
-            const cp         = bezierControlPoint(from, to, offsetPx);
-            const linePoints = pairTotal > 1 ? bezierPoints(from, to, cp) : [from, to];
+            const cpPx       = bezierControlPx(fromContPx, toContPx, offsetPx);
+            const linePoints = pairTotal > 1 ? bezierPoints(fromContPx, toContPx, cpPx) : [from, to];
 
             const opts = {
                 color:   linkColor(gl),
@@ -559,7 +562,7 @@
             line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
             line.addTo(linkLayer);
 
-            // Traffic label at Bezier control point — one per link, collision-resolved
+            // Traffic label at arc vertex (cpPx) — recomputed from pixels each render
             if (gl.in_bps > 0) {
                 const pixelLen = distPx;
                 if (pixelLen > 100) {
@@ -569,7 +572,7 @@
                         html:      `<div class="netmap-link-label">${labelHtml}</div>`,
                         iconAnchor: [0, 0]
                     });
-                    const resolvedPx    = resolveLabel(map.latLngToContainerPoint(cp), placedLabelPositions);
+                    const resolvedPx     = resolveLabel(cpPx, placedLabelPositions);
                     const resolvedLatLng = map.containerPointToLatLng(resolvedPx);
                     L.marker([resolvedLatLng.lat, resolvedLatLng.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
                 }
@@ -678,8 +681,8 @@
             const toContPx   = map.latLngToContainerPoint(to);
             const distPx     = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
             const offsetPx   = pairTotal > 1 ? bezierOffset(idx, distPx) : 0;
-            const cp         = bezierControlPoint(from, to, offsetPx);
-            const linePoints = pairTotal > 1 ? bezierPoints(from, to, cp) : [from, to];
+            const cpPx       = bezierControlPx(fromContPx, toContPx, offsetPx);
+            const linePoints = pairTotal > 1 ? bezierPoints(fromContPx, toContPx, cpPx) : [from, to];
 
             const opts = {
                 color:   linkColor(link),
@@ -716,7 +719,7 @@
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);
 
-            // Always-visible traffic label at Bezier control point — one per link, collision-resolved
+            // Always-visible traffic label at arc vertex (cpPx) — recomputed from pixels each render
             const pixelLen = distPx;
             if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100) {
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
@@ -725,7 +728,7 @@
                     html: `<div class="netmap-link-label">${labelHtml}</div>`,
                     iconAnchor: [0, 0]
                 });
-                const resolvedPx     = resolveLabel(map.latLngToContainerPoint(cp), placedLabelPositions);
+                const resolvedPx     = resolveLabel(cpPx, placedLabelPositions);
                 const resolvedLatLng = map.containerPointToLatLng(resolvedPx);
                 L.marker([resolvedLatLng.lat, resolvedLatLng.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
             }
