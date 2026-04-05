@@ -233,6 +233,28 @@
         return pts;
     }
 
+    /**
+     * Find a non-colliding screen position for a link label.
+     * Nudges 18px downward (up to 3 times) if within 60px of an existing label.
+     * Pushes the final position into placedPositions for subsequent checks.
+     *
+     * @param {L.Point}   candidatePx     initial screen-space position
+     * @param {L.Point[]} placedPositions already-placed positions (mutated in-place)
+     * @returns {L.Point}                 final screen-space position
+     */
+    function resolveLabel(candidatePx, placedPositions) {
+        let pos = candidatePx;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const collision = placedPositions.some(function (p) {
+                return Math.hypot(p.x - pos.x, p.y - pos.y) < 60;
+            });
+            if (!collision) { break; }
+            pos = L.point(pos.x, pos.y + 18);
+        }
+        placedPositions.push(pos);
+        return pos;
+    }
+
     // ── Haversine distance ───────────────────────────────────────────────
 
     /**
@@ -501,18 +523,7 @@
             grpPairIndex[gl.id] = grpPairCount[pk]++;
         });
 
-        // Pre-pass: best-bps link per group pair for traffic label
-        const grpBestLabel = {};
-        grpLinks.forEach(function (gl) {
-            if (!gl.in_bps || gl.in_bps <= 0) { return; }
-            const pk = gl.from_group < gl.to_group
-                ? gl.from_group + '_' + gl.to_group
-                : gl.to_group   + '_' + gl.from_group;
-            if (!grpBestLabel[pk] || gl.in_bps > grpBestLabel[pk].in_bps) {
-                grpBestLabel[pk] = gl;
-            }
-        });
-
+        const placedLabelPositions = [];
         grpLinks.forEach(function (gl) {
             const from = coordMap[gl.from_group];
             const to   = coordMap[gl.to_group];
@@ -542,19 +553,21 @@
             line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
             line.addTo(linkLayer);
 
-            // Traffic label at Bezier control point — only for best-bps link in this group pair
-            if (gl.in_bps > 0 && grpBestLabel[pk] === gl) {
+            // Traffic label at Bezier control point — one per link, collision-resolved
+            if (gl.in_bps > 0) {
                 const fromContPx = map.latLngToContainerPoint(from);
                 const toContPx   = map.latLngToContainerPoint(to);
                 const pixelLen   = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
                 if (pixelLen > 100) {
-                    const labelHtml = `\u2193${formatSpeedCompact(gl.in_bps)} \u2191${formatSpeedCompact(gl.out_bps)}`;
-                    const icon      = L.divIcon({
+                    const labelHtml  = `\u2193${formatSpeedCompact(gl.in_bps)} \u2191${formatSpeedCompact(gl.out_bps)}`;
+                    const icon       = L.divIcon({
                         className: '',
                         html:      `<div class="netmap-link-label">${labelHtml}</div>`,
                         iconAnchor: [0, 0]
                     });
-                    L.marker([cp.lat, cp.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                    const resolvedPx    = resolveLabel(map.latLngToContainerPoint(cp), placedLabelPositions);
+                    const resolvedLatLng = map.containerPointToLatLng(resolvedPx);
+                    L.marker([resolvedLatLng.lat, resolvedLatLng.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
                 }
             }
         });
@@ -645,19 +658,8 @@
             pairLinkIndex[link.id] = pairLinkCount[pk]++;
         });
 
-        // Pre-pass: for each canonical device pair, keep the link with highest in_bps.
-        // This prevents label overlap when multiple LLDP links run between the same two devices.
-        const bestLabelLink = {};
-        links.forEach(function (link) {
-            if (!link.in_bps || link.in_bps <= 0) { return; }
-            const a = link.local_device_id, b = link.remote_device_id;
-            const pairKey = Math.min(a, b) + '-' + Math.max(a, b);
-            if (!bestLabelLink[pairKey] || link.in_bps > bestLabelLink[pairKey].in_bps) {
-                bestLabelLink[pairKey] = link;
-            }
-        });
-
         // Render link polylines
+        const placedLabelPositions = [];
         links.forEach(function (link) {
             const from = deviceCoords[link.local_device_id];
             const to   = deviceCoords[link.remote_device_id];
@@ -707,20 +709,20 @@
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);
 
-            // Always-visible traffic label at the Bezier control point (individual view only).
-            // Only render if: in_bps > 0, zoom >= 12, pixel length > 100px, and this
-            // link has the highest in_bps for this device pair (prevents label overlap).
+            // Always-visible traffic label at Bezier control point — one per link, collision-resolved
             const fromContPx = map.latLngToContainerPoint(from);
             const toContPx   = map.latLngToContainerPoint(to);
             const pixelLen   = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
-            if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100 && bestLabelLink[pairKey] === link) {
+            if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100) {
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
                 const icon = L.divIcon({
                     className: '',
                     html: `<div class="netmap-link-label">${labelHtml}</div>`,
                     iconAnchor: [0, 0]
                 });
-                L.marker([cp.lat, cp.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                const resolvedPx     = resolveLabel(map.latLngToContainerPoint(cp), placedLabelPositions);
+                const resolvedLatLng = map.containerPointToLatLng(resolvedPx);
+                L.marker([resolvedLatLng.lat, resolvedLatLng.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
             }
         });
     }
