@@ -741,8 +741,12 @@
     }
     updateZoomIndicator();
 
-    // ── Zoom-driven re-render (no re-fetch) ──────────────────────────────
+    // ── Zoom/pan-driven re-render (no re-fetch) ──────────────────────────
+    // zoomend: recalculates Bezier curves at the new zoom level.
+    // moveend: fires after fitBounds settles the center — ensures Bezier
+    //          control points are computed with the final view (zoom + center).
     map.on('zoomend', function () { updateZoomIndicator(); renderAll(); });
+    map.on('moveend', renderAll);
 
     // ── Data fetching ────────────────────────────────────────────────────
 
