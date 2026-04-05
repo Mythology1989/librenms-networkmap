@@ -175,43 +175,62 @@
     }
 
     /**
-     * Lateral pixel offset for the nth parallel link between the same node pair.
-     * idx=0 → 0, idx=1 → +step, idx=2 → -step, idx=3 → +2*step, …
-     * step is adaptive: max(20, 100 - distPx * 0.5) so nearby nodes separate more.
+     * Signed pixel offset for the Bezier control point of the nth parallel link.
+     * idx=0 → 0, idx=1 → +40, idx=2 → -40, idx=3 → +80, idx=4 → -80, …
      *
-     * @param {number} idx   zero-based index within the parallel link group
-     * @param {number} step  base offset in pixels (≥ 20)
-     * @returns {number}     signed pixel offset
+     * @param {number} idx  zero-based index within the parallel link group
+     * @returns {number}    signed pixel offset for the control point
      */
-    function linkOffset(idx, step) {
+    function bezierOffset(idx) {
         if (idx === 0) { return 0; }
         const mult = Math.ceil(idx / 2);
-        return (idx % 2 === 1) ? step * mult : -(step * mult);
+        return (idx % 2 === 1) ? 40 * mult : -(40 * mult);
     }
 
     /**
-     * Displace both endpoints of a link by offsetPx pixels perpendicular to the
-     * link direction using screen-space math. Returns new {from, to} LatLng objects.
+     * Compute the Bezier control point: the midpoint displaced perpendicularly
+     * by offsetPx pixels in screen space, then converted back to LatLng.
      *
      * @param {L.LatLng} from
      * @param {L.LatLng} to
-     * @param {number}   offsetPx  signed pixel offset (0 = no change)
-     * @returns {{ from: L.LatLng, to: L.LatLng }}
+     * @param {number}   offsetPx  signed pixel displacement (0 = straight midpoint)
+     * @returns {L.LatLng}         control point position
      */
-    function applyLinkOffset(from, to, offsetPx) {
-        if (offsetPx === 0) { return { from: from, to: to }; }
+    function bezierControlPoint(from, to, offsetPx) {
         const fromPx = map.latLngToContainerPoint(from);
         const toPx   = map.latLngToContainerPoint(to);
-        const dx = toPx.x - fromPx.x;
-        const dy = toPx.y - fromPx.y;
+        const mx = (fromPx.x + toPx.x) / 2;
+        const my = (fromPx.y + toPx.y) / 2;
+        if (offsetPx === 0) { return map.containerPointToLatLng(L.point(mx, my)); }
+        const dx  = toPx.x - fromPx.x;
+        const dy  = toPx.y - fromPx.y;
         const len = Math.hypot(dx, dy);
-        if (len === 0) { return { from: from, to: to }; }
-        const px = -dy / len;
+        if (len === 0) { return map.containerPointToLatLng(L.point(mx, my)); }
+        const px = -dy / len; // perpendicular unit vector
         const py =  dx / len;
-        return {
-            from: map.containerPointToLatLng(L.point(fromPx.x + px * offsetPx, fromPx.y + py * offsetPx)),
-            to:   map.containerPointToLatLng(L.point(toPx.x   + px * offsetPx, toPx.y   + py * offsetPx))
-        };
+        return map.containerPointToLatLng(L.point(mx + px * offsetPx, my + py * offsetPx));
+    }
+
+    /**
+     * Generate 11 LatLng points along a quadratic Bezier curve.
+     * P(t) = (1-t)²·p1 + 2(1-t)t·cp + t²·p2,  t ∈ [0,1]
+     *
+     * @param {L.LatLng} p1  start point
+     * @param {L.LatLng} p2  end point
+     * @param {L.LatLng} cp  control point (displaced midpoint)
+     * @returns {L.LatLng[]} 11 points including both endpoints
+     */
+    function bezierPoints(p1, p2, cp) {
+        const pts = [];
+        for (let i = 0; i <= 10; i++) {
+            const t  = i / 10;
+            const t1 = 1 - t;
+            pts.push(L.latLng(
+                t1 * t1 * p1.lat + 2 * t1 * t * cp.lat + t * t * p2.lat,
+                t1 * t1 * p1.lng + 2 * t1 * t * cp.lng + t * t * p2.lng
+            ));
+        }
+        return pts;
     }
 
     // ── Haversine distance ───────────────────────────────────────────────
@@ -502,12 +521,11 @@
             const pk     = gl.from_group < gl.to_group
                 ? gl.from_group + '_' + gl.to_group
                 : gl.to_group   + '_' + gl.from_group;
-            const idx    = grpPairIndex[gl.id] || 0;
-            const rawFromPx = map.latLngToContainerPoint(from);
-            const rawToPx   = map.latLngToContainerPoint(to);
-            const distPx    = Math.hypot(rawFromPx.x - rawToPx.x, rawFromPx.y - rawToPx.y);
-            const step      = Math.max(20, 100 - distPx * 0.5);
-            const { from: drawFrom, to: drawTo } = applyLinkOffset(from, to, linkOffset(idx, step));
+            const idx        = grpPairIndex[gl.id] || 0;
+            const pairTotal  = grpPairCount[pk] || 1;
+            const offsetPx   = pairTotal > 1 ? bezierOffset(idx) : 0;
+            const cp         = bezierControlPoint(from, to, offsetPx);
+            const linePoints = pairTotal > 1 ? bezierPoints(from, to, cp) : [from, to];
 
             const opts = {
                 color:   linkColor(gl),
@@ -516,7 +534,7 @@
             };
             if (gl.type === 'manual') { opts.dashArray = '6, 4'; }
 
-            const line = L.polyline([drawFrom, drawTo], opts);
+            const line = L.polyline(linePoints, opts);
 
             const typeLabel = gl.type === 'manual' ? 'Manual' : 'LLDP';
             const utilLabel = (gl.utilization_pct || 0) > 0 ? ` | ${gl.utilization_pct.toFixed(1)}%` : '';
@@ -524,21 +542,19 @@
             line.bindTooltip(tooltip, { className: 'netmap-link-tooltip', sticky: true });
             line.addTo(linkLayer);
 
-            // Traffic label at offset midpoint — only for best-bps link in this group pair
+            // Traffic label at Bezier control point — only for best-bps link in this group pair
             if (gl.in_bps > 0 && grpBestLabel[pk] === gl) {
-                const drawFromPx = map.latLngToContainerPoint(drawFrom);
-                const drawToPx   = map.latLngToContainerPoint(drawTo);
-                const pixelLen   = Math.hypot(drawFromPx.x - drawToPx.x, drawFromPx.y - drawToPx.y);
+                const fromContPx = map.latLngToContainerPoint(from);
+                const toContPx   = map.latLngToContainerPoint(to);
+                const pixelLen   = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
                 if (pixelLen > 100) {
-                    const midLat    = (drawFrom.lat + drawTo.lat) / 2;
-                    const midLng    = (drawFrom.lng + drawTo.lng) / 2;
                     const labelHtml = `\u2193${formatSpeedCompact(gl.in_bps)} \u2191${formatSpeedCompact(gl.out_bps)}`;
                     const icon      = L.divIcon({
                         className: '',
                         html:      `<div class="netmap-link-label">${labelHtml}</div>`,
                         iconAnchor: [0, 0]
                     });
-                    L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                    L.marker([cp.lat, cp.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
                 }
             }
         });
@@ -647,15 +663,14 @@
             const to   = deviceCoords[link.remote_device_id];
             if (!from || !to) { return; }
 
-            // Compute lateral offset for parallel links between the same device pair
+            // Bezier offset for parallel links between the same device pair
             const pairKey    = Math.min(link.local_device_id, link.remote_device_id) + '-' +
                                Math.max(link.local_device_id, link.remote_device_id);
             const idx        = pairLinkIndex[link.id] || 0;
-            const rawFromPx  = map.latLngToContainerPoint(from);
-            const rawToPx    = map.latLngToContainerPoint(to);
-            const distPx     = Math.hypot(rawFromPx.x - rawToPx.x, rawFromPx.y - rawToPx.y);
-            const step       = Math.max(20, 100 - distPx * 0.5);
-            const { from: drawFrom, to: drawTo } = applyLinkOffset(from, to, linkOffset(idx, step));
+            const pairTotal  = pairLinkCount[pairKey] || 1;
+            const offsetPx   = pairTotal > 1 ? bezierOffset(idx) : 0;
+            const cp         = bezierControlPoint(from, to, offsetPx);
+            const linePoints = pairTotal > 1 ? bezierPoints(from, to, cp) : [from, to];
 
             const opts = {
                 color:   linkColor(link),
@@ -664,7 +679,7 @@
             };
             if (link.type === 'manual') { opts.dashArray = '6, 4'; }
 
-            const line = L.polyline([drawFrom, drawTo], opts);
+            const line = L.polyline(linePoints, opts);
 
             const statusLabel = (link.status || 'unknown').toUpperCase();
             const typeLabel   = link.type === 'manual' ? 'Manual' : 'LLDP';
@@ -692,22 +707,20 @@
             line.bindPopup(popupHtml, { className: 'netmap-popup' });
             line.addTo(linkLayer);
 
-            // Always-visible traffic label at the offset midpoint (individual view only).
+            // Always-visible traffic label at the Bezier control point (individual view only).
             // Only render if: in_bps > 0, zoom >= 12, pixel length > 100px, and this
             // link has the highest in_bps for this device pair (prevents label overlap).
-            const fromPx   = map.latLngToContainerPoint(drawFrom);
-            const toPx     = map.latLngToContainerPoint(drawTo);
-            const pixelLen = Math.hypot(fromPx.x - toPx.x, fromPx.y - toPx.y);
+            const fromContPx = map.latLngToContainerPoint(from);
+            const toContPx   = map.latLngToContainerPoint(to);
+            const pixelLen   = Math.hypot(fromContPx.x - toContPx.x, fromContPx.y - toContPx.y);
             if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100 && bestLabelLink[pairKey] === link) {
-                const midLat = (drawFrom.lat + drawTo.lat) / 2;
-                const midLng = (drawFrom.lng + drawTo.lng) / 2;
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
                 const icon = L.divIcon({
                     className: '',
                     html: `<div class="netmap-link-label">${labelHtml}</div>`,
                     iconAnchor: [0, 0]
                 });
-                L.marker([midLat, midLng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
+                L.marker([cp.lat, cp.lng], { icon: icon, interactive: false }).addTo(linkLabelLayer);
             }
         });
     }
