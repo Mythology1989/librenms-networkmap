@@ -80,6 +80,7 @@ if ($method === 'POST') {
         'excluded_locations',
         'hidden_links',
         'link_priorities',
+        'map_styles',
     ];
 
     if (! isset($body['key']) || ! isset($body['value'])) {

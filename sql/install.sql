@@ -50,6 +50,10 @@ INSERT IGNORE INTO `plugin_networkmap_settings` (`key`, `value`) VALUES
   ('links_filter_initialized', '0'),
   ('link_priorities',          '{}');
 
+-- Visual style profiles (map = normal mode, tv = dark NOC mode)
+INSERT IGNORE INTO `plugin_networkmap_settings` (`key`, `value`) VALUES
+  ('map_styles', '{"map":{"node_radius":8,"node_color_up":"#2ecc71","node_color_alert":"#f39c12","node_color_down":"#e74c3c","label_size":13,"label_color":"#333333","link_width_min":1,"link_width_max":8,"link_color_low":"#2ecc71","link_color_mid":"#f39c12","link_color_high":"#e74c3c","link_color_manual":"#3498db","trafficlabel_size":12,"trafficlabel_bg":"#000000","trafficlabel_color":"#ffffff"},"tv":{"node_radius":8,"node_color_up":"#00ff88","node_color_alert":"#ffaa00","node_color_down":"#ff3333","label_size":13,"label_color":"#ffffff","link_width_min":1,"link_width_max":8,"link_color_low":"#00cc66","link_color_mid":"#ff8800","link_color_high":"#ff2222","link_color_manual":"#4488ff","trafficlabel_size":12,"trafficlabel_bg":"#1a1a1a","trafficlabel_color":"#00ff88"}}');
+
 -- ----------------------------------------------------------------------------
 -- Table 4: Traffic rate cache (translates SNMP octet counters to bps)
 -- Updated each polling cycle; one row per monitored port.

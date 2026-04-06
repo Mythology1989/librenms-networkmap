@@ -159,9 +159,13 @@ if (request()->query('format', '') === 'json') {
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
-$hidden_links_json  = json_encode($hidden_links_tv, JSON_UNESCAPED_UNICODE);
-$link_priorities_raw = netmap_get_setting('link_priorities', '[]');
+$hidden_links_json    = json_encode($hidden_links_tv, JSON_UNESCAPED_UNICODE);
+$link_priorities_raw  = netmap_get_setting('link_priorities', '[]');
 $link_priorities_json = json_encode(json_decode($link_priorities_raw, true) ?: [], JSON_UNESCAPED_UNICODE);
+$map_styles_raw       = netmap_get_setting('map_styles', '{}');
+$map_styles_arr       = json_decode($map_styles_raw, true);
+if (!is_array($map_styles_arr)) { $map_styles_arr = []; }
+$map_styles_json      = json_encode($map_styles_arr, JSON_UNESCAPED_UNICODE);
 $tv_api_url = '/plugin/v1/NetworkMap?view=tv&token=' . urlencode($token) . '&format=json';
 $zoom_threshold = (int) netmap_get_setting('zoom_threshold_cluster', 18);
 ?>
@@ -248,6 +252,7 @@ window.netmapConfig = {
     zoomThreshold:   <?= $zoom_threshold ?>,
     hiddenLinks:     <?= $hidden_links_json ?>,
     linkPriorities:  <?= $link_priorities_json ?>,
+    styles:          <?= $map_styles_json ?>,
     onTvDataLoaded: function (data) {
         var upEl   = document.querySelector('#tv-status .up');
         var downEl = document.querySelector('#tv-status .down');

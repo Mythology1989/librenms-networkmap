@@ -25,6 +25,47 @@ $link_priorities_json      = netmap_get_setting('link_priorities', '{}');
 $link_priorities_arr       = json_decode($link_priorities_json, true);
 if (!is_array($link_priorities_arr)) { $link_priorities_arr = []; }
 
+$map_styles_json           = netmap_get_setting('map_styles', '{}');
+$map_styles_arr            = json_decode($map_styles_json, true);
+if (!is_array($map_styles_arr)) { $map_styles_arr = []; }
+
+// Style defaults (used for PHP-side field rendering and reset buttons)
+$style_defaults = [
+    'map' => [
+        'node_radius'       => 8,    'node_color_up'    => '#2ecc71',
+        'node_color_alert'  => '#f39c12', 'node_color_down' => '#e74c3c',
+        'label_size'        => 13,   'label_color'      => '#333333',
+        'link_width_min'    => 1,    'link_width_max'   => 8,
+        'link_color_low'    => '#2ecc71', 'link_color_mid'  => '#f39c12',
+        'link_color_high'   => '#e74c3c', 'link_color_manual' => '#3498db',
+        'trafficlabel_size' => 12,   'trafficlabel_bg'  => '#000000',
+        'trafficlabel_color'=> '#ffffff',
+    ],
+    'tv'  => [
+        'node_radius'       => 8,    'node_color_up'    => '#00ff88',
+        'node_color_alert'  => '#ffaa00', 'node_color_down' => '#ff3333',
+        'label_size'        => 13,   'label_color'      => '#ffffff',
+        'link_width_min'    => 1,    'link_width_max'   => 8,
+        'link_color_low'    => '#00cc66', 'link_color_mid'  => '#ff8800',
+        'link_color_high'   => '#ff2222', 'link_color_manual' => '#4488ff',
+        'trafficlabel_size' => 12,   'trafficlabel_bg'  => '#1a1a1a',
+        'trafficlabel_color'=> '#00ff88',
+    ],
+];
+
+// Merge stored values over defaults for each profile
+foreach (['map', 'tv'] as $_p) {
+    $map_styles_arr[$_p] = array_merge(
+        $style_defaults[$_p],
+        isset($map_styles_arr[$_p]) && is_array($map_styles_arr[$_p]) ? $map_styles_arr[$_p] : []
+    );
+}
+
+// Helper to get a style field value for a profile, escaped for HTML
+function nm_sv($styles, $profile, $field) {
+    return htmlspecialchars((string)($styles[$profile][$field] ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
 // Auto-init: on first load, hide all LLDP links (user enables what they want)
 $links_filter_initialized  = netmap_get_setting('links_filter_initialized', '0');
 if ($links_filter_initialized === '0') {
@@ -344,6 +385,195 @@ if ($locations_list === false) { $locations_list = []; }
     <button type="submit" class="btn btn-warning">Guardar filtro de locations</button>
     <span id="nm-loc-msg" style="margin-left:10px;display:none;"></span>
     </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Panel: Estilos del mapa                                                 -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="panel panel-default">
+  <div class="panel-heading"><h3 class="panel-title">Estilos del mapa</h3></div>
+  <div class="panel-body">
+
+    <!-- Profile tabs -->
+    <ul class="nav nav-tabs" id="nm-styles-tabs" style="margin-bottom:16px;">
+      <li class="active"><a href="#nm-styles-map" data-toggle="tab">Mapa normal</a></li>
+      <li><a href="#nm-styles-tv" data-toggle="tab">Modo TV</a></li>
+    </ul>
+
+    <div class="tab-content">
+
+      <?php foreach (['map' => 'Mapa normal', 'tv' => 'Modo TV'] as $prof => $profLabel): ?>
+      <div class="tab-pane <?= $prof === 'map' ? 'active' : '' ?>" id="nm-styles-<?= $prof ?>">
+
+        <!-- SVG preview -->
+        <div style="margin-bottom:14px;">
+          <strong>Vista previa</strong>
+          <svg id="nm-preview-<?= $prof ?>" width="240" height="80"
+               style="display:block;border:1px solid #ddd;border-radius:4px;margin-top:6px;background:#f8f8f8;">
+            <!-- link line -->
+            <line id="nm-prev-link-<?= $prof ?>" x1="30" y1="40" x2="210" y2="40"
+                  stroke="<?= nm_sv($map_styles_arr, $prof, 'link_color_low') ?>"
+                  stroke-width="<?= nm_sv($map_styles_arr, $prof, 'link_width_min') ?>"/>
+            <!-- node A -->
+            <circle id="nm-prev-nodeA-<?= $prof ?>" cx="30" cy="40"
+                    r="<?= nm_sv($map_styles_arr, $prof, 'node_radius') ?>"
+                    fill="<?= nm_sv($map_styles_arr, $prof, 'node_color_up') ?>"/>
+            <!-- node B (alert) -->
+            <circle id="nm-prev-nodeB-<?= $prof ?>" cx="120" cy="40"
+                    r="<?= nm_sv($map_styles_arr, $prof, 'node_radius') ?>"
+                    fill="<?= nm_sv($map_styles_arr, $prof, 'node_color_alert') ?>"/>
+            <!-- node C (down) -->
+            <circle id="nm-prev-nodeC-<?= $prof ?>" cx="210" cy="40"
+                    r="<?= nm_sv($map_styles_arr, $prof, 'node_radius') ?>"
+                    fill="<?= nm_sv($map_styles_arr, $prof, 'node_color_down') ?>"/>
+            <!-- label -->
+            <text id="nm-prev-label-<?= $prof ?>" x="30" y="62"
+                  font-size="<?= nm_sv($map_styles_arr, $prof, 'label_size') ?>"
+                  fill="<?= nm_sv($map_styles_arr, $prof, 'label_color') ?>"
+                  text-anchor="middle" font-weight="bold">Router</text>
+            <!-- traffic label -->
+            <rect id="nm-prev-tlbg-<?= $prof ?>" x="95" y="22" width="50" height="16" rx="2"
+                  fill="<?= nm_sv($map_styles_arr, $prof, 'trafficlabel_bg') ?>"/>
+            <text id="nm-prev-tl-<?= $prof ?>" x="120" y="34"
+                  font-size="<?= nm_sv($map_styles_arr, $prof, 'trafficlabel_size') ?>"
+                  fill="<?= nm_sv($map_styles_arr, $prof, 'trafficlabel_color') ?>"
+                  text-anchor="middle" font-weight="bold">↓12M ↑3M</text>
+          </svg>
+        </div>
+
+        <form class="nm-styles-form" data-profile="<?= $prof ?>">
+          <div class="row">
+
+            <!-- Nodos -->
+            <div class="col-sm-6">
+              <h5 style="margin-top:0;border-bottom:1px solid #eee;padding-bottom:4px;">Nodos</h5>
+              <div class="form-group">
+                <label>Radio del círculo (px)</label>
+                <input type="number" class="form-control input-sm nm-style-field"
+                       name="node_radius" min="4" max="20" step="1"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'node_radius') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color nodo UP</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="node_color_up"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'node_color_up') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color nodo UP con alertas</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="node_color_alert"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'node_color_alert') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color nodo DOWN</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="node_color_down"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'node_color_down') ?>">
+              </div>
+            </div>
+
+            <!-- Labels -->
+            <div class="col-sm-6">
+              <h5 style="margin-top:0;border-bottom:1px solid #eee;padding-bottom:4px;">Etiquetas de dispositivo</h5>
+              <div class="form-group">
+                <label>Tamaño fuente (px)</label>
+                <input type="number" class="form-control input-sm nm-style-field"
+                       name="label_size" min="10" max="20" step="1"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'label_size') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color texto</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="label_color"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'label_color') ?>">
+              </div>
+            </div>
+
+          </div><!-- /.row -->
+
+          <div class="row" style="margin-top:8px;">
+
+            <!-- Enlaces -->
+            <div class="col-sm-6">
+              <h5 style="margin-top:0;border-bottom:1px solid #eee;padding-bottom:4px;">Enlaces</h5>
+              <div class="form-group">
+                <label>Grosor mínimo (px)</label>
+                <input type="number" class="form-control input-sm nm-style-field"
+                       name="link_width_min" min="1" max="4" step="1"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'link_width_min') ?>">
+              </div>
+              <div class="form-group">
+                <label>Grosor máximo (px)</label>
+                <input type="number" class="form-control input-sm nm-style-field"
+                       name="link_width_max" min="4" max="12" step="1"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'link_width_max') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color enlace &lt;50% uso</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="link_color_low"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'link_color_low') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color enlace 50–80% uso</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="link_color_mid"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'link_color_mid') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color enlace &gt;80% o DOWN</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="link_color_high"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'link_color_high') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color enlace manual</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="link_color_manual"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'link_color_manual') ?>">
+              </div>
+            </div>
+
+            <!-- Etiquetas velocidad -->
+            <div class="col-sm-6">
+              <h5 style="margin-top:0;border-bottom:1px solid #eee;padding-bottom:4px;">Etiqueta de velocidad (↓/↑)</h5>
+              <div class="form-group">
+                <label>Tamaño fuente (px)</label>
+                <input type="number" class="form-control input-sm nm-style-field"
+                       name="trafficlabel_size" min="9" max="16" step="1"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'trafficlabel_size') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color fondo</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="trafficlabel_bg"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'trafficlabel_bg') ?>">
+              </div>
+              <div class="form-group">
+                <label>Color texto</label>
+                <input type="color" class="form-control input-sm nm-style-field"
+                       name="trafficlabel_color"
+                       value="<?= nm_sv($map_styles_arr, $prof, 'trafficlabel_color') ?>">
+              </div>
+            </div>
+
+          </div><!-- /.row -->
+
+          <div style="margin-top:12px;">
+            <button type="submit" class="btn btn-primary btn-sm">Guardar estilos (<?= htmlspecialchars($profLabel, ENT_QUOTES, 'UTF-8') ?>)</button>
+            <button type="button" class="btn btn-default btn-sm nm-styles-reset" data-profile="<?= $prof ?>"
+                    style="margin-left:8px;">Restablecer defaults</button>
+            <span class="nm-styles-msg" data-profile="<?= $prof ?>"
+                  style="margin-left:10px;display:none;"></span>
+          </div>
+
+        </form>
+      </div><!-- /.tab-pane -->
+      <?php endforeach; ?>
+
+    </div><!-- /.tab-content -->
   </div>
 </div>
 
@@ -737,6 +967,131 @@ if ($locations_list === false) { $locations_list = []; }
 
     makeTableSortable('nm-names-table');
     makeTableSortable('nm-locations-table');
+
+    // ── Map styles panel ──────────────────────────────────────────────────
+
+    var STYLE_DEFAULTS = {
+        'map': {
+            node_radius: 8, node_color_up: '#2ecc71', node_color_alert: '#f39c12',
+            node_color_down: '#e74c3c', label_size: 13, label_color: '#333333',
+            link_width_min: 1, link_width_max: 8, link_color_low: '#2ecc71',
+            link_color_mid: '#f39c12', link_color_high: '#e74c3c',
+            link_color_manual: '#3498db', trafficlabel_size: 12,
+            trafficlabel_bg: '#000000', trafficlabel_color: '#ffffff'
+        },
+        'tv': {
+            node_radius: 8, node_color_up: '#00ff88', node_color_alert: '#ffaa00',
+            node_color_down: '#ff3333', label_size: 13, label_color: '#ffffff',
+            link_width_min: 1, link_width_max: 8, link_color_low: '#00cc66',
+            link_color_mid: '#ff8800', link_color_high: '#ff2222',
+            link_color_manual: '#4488ff', trafficlabel_size: 12,
+            trafficlabel_bg: '#1a1a1a', trafficlabel_color: '#00ff88'
+        }
+    };
+
+    function updateStylePreview(prof) {
+        var pane = document.getElementById('nm-styles-' + prof);
+        if (!pane) { return; }
+        var get = function(name) {
+            var el = pane.querySelector('.nm-style-field[name="' + name + '"]');
+            return el ? el.value : null;
+        };
+        var nodeA   = document.getElementById('nm-prev-nodeA-' + prof);
+        var nodeB   = document.getElementById('nm-prev-nodeB-' + prof);
+        var nodeC   = document.getElementById('nm-prev-nodeC-' + prof);
+        var link    = document.getElementById('nm-prev-link-' + prof);
+        var label   = document.getElementById('nm-prev-label-' + prof);
+        var tlbg    = document.getElementById('nm-prev-tlbg-' + prof);
+        var tl      = document.getElementById('nm-prev-tl-' + prof);
+
+        if (nodeA) { nodeA.setAttribute('r', get('node_radius') || 8); nodeA.setAttribute('fill', get('node_color_up') || ''); }
+        if (nodeB) { nodeB.setAttribute('r', get('node_radius') || 8); nodeB.setAttribute('fill', get('node_color_alert') || ''); }
+        if (nodeC) { nodeC.setAttribute('r', get('node_radius') || 8); nodeC.setAttribute('fill', get('node_color_down') || ''); }
+        if (link)  { link.setAttribute('stroke', get('link_color_low') || ''); link.setAttribute('stroke-width', get('link_width_min') || 1); }
+        if (label) { label.setAttribute('font-size', get('label_size') || 13); label.setAttribute('fill', get('label_color') || ''); }
+        if (tlbg)  { tlbg.setAttribute('fill', get('trafficlabel_bg') || ''); }
+        if (tl)    { tl.setAttribute('font-size', get('trafficlabel_size') || 12); tl.setAttribute('fill', get('trafficlabel_color') || ''); }
+    }
+
+    // Real-time preview on input change
+    ['map', 'tv'].forEach(function(prof) {
+        var pane = document.getElementById('nm-styles-' + prof);
+        if (!pane) { return; }
+        pane.addEventListener('input', function(e) {
+            if (e.target.classList.contains('nm-style-field')) {
+                updateStylePreview(prof);
+            }
+        });
+    });
+
+    // Save styles form
+    document.querySelectorAll('.nm-styles-form').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var prof    = form.getAttribute('data-profile');
+            var msgEl   = form.querySelector('.nm-styles-msg[data-profile="' + prof + '"]');
+            var fields  = form.querySelectorAll('.nm-style-field');
+            var data    = {};
+            fields.forEach(function(el) {
+                var v = el.value;
+                if (el.type === 'number') {
+                    data[el.name] = parseFloat(v) || 0;
+                } else {
+                    data[el.name] = v;
+                }
+            });
+
+            msgEl.style.display = '';
+            msgEl.textContent   = 'Guardando…';
+            msgEl.style.color   = '#555';
+
+            // Fetch current styles, merge this profile, then save the full object
+            fetch(API_SETTINGS, { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(current) {
+                var full = {};
+                try { full = JSON.parse((current.settings && current.settings.map_styles) || '{}'); } catch(x) {}
+                if (typeof full !== 'object' || full === null) { full = {}; }
+                full[prof] = data;
+                return fetch(API_SETTINGS, {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
+                    body: JSON.stringify({ key: 'map_styles', value: JSON.stringify(full) })
+                }).then(function(r) { return r.json(); });
+            })
+            .then(function(res) {
+                if (res.success) {
+                    msgEl.textContent = '✓ Estilos guardados';
+                    msgEl.style.color = '#27ae60';
+                } else {
+                    msgEl.textContent = '✗ ' + (res.error || 'Error');
+                    msgEl.style.color = '#c0392b';
+                }
+                setTimeout(function() { msgEl.style.display = 'none'; }, 3000);
+            })
+            .catch(function() {
+                msgEl.textContent = '✗ Error de red';
+                msgEl.style.color = '#c0392b';
+                setTimeout(function() { msgEl.style.display = 'none'; }, 3000);
+            });
+        });
+    });
+
+    // Reset to defaults buttons
+    document.querySelectorAll('.nm-styles-reset').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var prof  = btn.getAttribute('data-profile');
+            var pane  = document.getElementById('nm-styles-' + prof);
+            var defs  = STYLE_DEFAULTS[prof];
+            if (!pane || !defs) { return; }
+            pane.querySelectorAll('.nm-style-field').forEach(function(el) {
+                if (defs[el.name] !== undefined) {
+                    el.value = defs[el.name];
+                }
+            });
+            updateStylePreview(prof);
+        });
+    });
 
 })();
 </script>

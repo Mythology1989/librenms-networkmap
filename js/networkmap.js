@@ -34,6 +34,27 @@
 
     const config = window.netmapConfig;
 
+    // ── Active style profile (map = normal mode, tv = dark NOC mode) ─────
+    const _profile = config.tvMode ? 'tv' : 'map';
+    const _sd      = (config.styles && config.styles[_profile]) || {};
+    const S = {
+        node_radius:        +(_sd.node_radius        || 8),
+        node_color_up:        _sd.node_color_up       || '#2ecc71',
+        node_color_alert:     _sd.node_color_alert     || '#f39c12',
+        node_color_down:      _sd.node_color_down      || '#e74c3c',
+        label_size:         +(_sd.label_size          || 13),
+        label_color:          _sd.label_color          || '#333333',
+        link_width_min:     +(_sd.link_width_min      || 1),
+        link_width_max:     +(_sd.link_width_max      || 8),
+        link_color_low:       _sd.link_color_low       || '#2ecc71',
+        link_color_mid:       _sd.link_color_mid       || '#f39c12',
+        link_color_high:      _sd.link_color_high      || '#e74c3c',
+        link_color_manual:    _sd.link_color_manual    || '#3498db',
+        trafficlabel_size:  +(_sd.trafficlabel_size   || 12),
+        trafficlabel_bg:      _sd.trafficlabel_bg      || '#000000',
+        trafficlabel_color:   _sd.trafficlabel_color   || '#ffffff',
+    };
+
     // ── DOM references ───────────────────────────────────────────────────
     const loadingEl  = document.getElementById('netmap-loading');
     const refreshBtn = document.getElementById('netmap-refresh');
@@ -139,9 +160,9 @@
      * @returns {string} hex color
      */
     function deviceColor(device) {
-        if (device.status === 1 && device.active_alerts === 0) { return '#2ecc71'; }
-        if (device.status === 1 && device.active_alerts > 0)   { return '#f39c12'; }
-        if (device.status === 0)                                { return '#e74c3c'; }
+        if (device.status === 1 && device.active_alerts === 0) { return S.node_color_up; }
+        if (device.status === 1 && device.active_alerts > 0)   { return S.node_color_alert; }
+        if (device.status === 0)                                { return S.node_color_down; }
         return '#95a5a6';
     }
 
@@ -158,11 +179,11 @@
      * @returns {string} hex color
      */
     function linkColor(link) {
-        if (link.type === 'manual')         { return '#3498db'; }
-        if (link.status === 'down')         { return '#e74c3c'; }
-        if ((link.utilization_pct || 0) >= 80) { return '#e74c3c'; }
-        if ((link.utilization_pct || 0) >= 50) { return '#f39c12'; }
-        if (link.status === 'up')           { return '#2ecc71'; }
+        if (link.type === 'manual')            { return S.link_color_manual; }
+        if (link.status === 'down')            { return S.link_color_high; }
+        if ((link.utilization_pct || 0) >= 80) { return S.link_color_high; }
+        if ((link.utilization_pct || 0) >= 50) { return S.link_color_mid; }
+        if (link.status === 'up')              { return S.link_color_low; }
         return '#95a5a6';
     }
 
@@ -177,9 +198,12 @@
      * @returns {number}
      */
     function linkWeight(utilization_pct) {
-        if (!utilization_pct || utilization_pct <= 0) { return 1; }
+        const wMin = S.link_width_min;
+        const wMax = S.link_width_max;
+        if (!utilization_pct || utilization_pct <= 0) { return wMin; }
         const clamped = Math.min(utilization_pct, 100);
-        return Math.max(1, Math.min(8, 1 + 7 * Math.log(1 + clamped) / Math.log(101)));
+        return Math.max(wMin, Math.min(wMax,
+            wMin + (wMax - wMin) * Math.log(1 + clamped) / Math.log(101)));
     }
 
     /**
@@ -479,12 +503,12 @@
                 if (d.active_alerts > 0)     { hasAlerts = true; }
             });
 
-            let color = '#2ecc71';
-            if (hasDown)        { color = '#e74c3c'; }
-            else if (hasAlerts) { color = '#f39c12'; }
+            let color = S.node_color_up;
+            if (hasDown)        { color = S.node_color_down; }
+            else if (hasAlerts) { color = S.node_color_alert; }
 
             const latLng = coordMap[g.id];
-            const radius = g.devices.length > 1 ? 10 : 8;
+            const radius = g.devices.length > 1 ? S.node_radius + 2 : S.node_radius;
 
             const circle = L.circleMarker(latLng, {
                 radius,
@@ -519,7 +543,7 @@
 
             const labelIcon = L.divIcon({
                 className: '',
-                html:      `<div class="netmap-label">${escapeHtml(labelText)}</div>`,
+                html:      `<div class="netmap-label" style="font-size:${S.label_size}px;color:${S.label_color}">${escapeHtml(labelText)}</div>`,
                 iconAnchor: [0, 0]
             });
             L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
@@ -579,9 +603,10 @@
                 const pixelLen = distPx;
                 if (pixelLen > 100) {
                     const labelHtml  = `\u2193${formatSpeedCompact(gl.in_bps)} \u2191${formatSpeedCompact(gl.out_bps)}`;
+                    const tlStyle    = `font-size:${S.trafficlabel_size}px;color:${S.trafficlabel_color};background:${S.trafficlabel_bg}`;
                     const icon       = L.divIcon({
                         className: '',
-                        html:      `<div class="netmap-link-label">${labelHtml}</div>`,
+                        html:      `<div class="netmap-link-label" style="${tlStyle}">${labelHtml}</div>`,
                         iconAnchor: [0, 0]
                     });
                     const midChordPx     = L.point((fromContPx.x + toContPx.x) / 2, (fromContPx.y + toContPx.y) / 2);
@@ -637,7 +662,7 @@
             deviceCoords[d.id] = latLng;
 
             const circle = L.circleMarker(latLng, {
-                radius:      8,
+                radius:      S.node_radius,
                 fillColor:   deviceColor(d),
                 fillOpacity: 0.85,
                 weight:      2,
@@ -663,7 +688,7 @@
 
             const labelIcon = L.divIcon({
                 className:  '',
-                html:       `<div class="netmap-label">${escapeHtml(d.display_name)}</div>`,
+                html:       `<div class="netmap-label" style="font-size:${S.label_size}px;color:${S.label_color}">${escapeHtml(d.display_name)}</div>`,
                 iconAnchor: [0, 0]
             });
             L.marker(latLng, { icon: labelIcon, interactive: false }).addTo(labelLayer);
@@ -740,9 +765,10 @@
             const pixelLen = distPx;
             if (link.in_bps > 0 && map.getZoom() >= 12 && pixelLen > 100) {
                 const labelHtml = `\u2193${formatSpeedCompact(link.in_bps)} \u2191${formatSpeedCompact(link.out_bps)}`;
+                const tlStyle   = `font-size:${S.trafficlabel_size}px;color:${S.trafficlabel_color};background:${S.trafficlabel_bg}`;
                 const icon = L.divIcon({
                     className: '',
-                    html: `<div class="netmap-link-label">${labelHtml}</div>`,
+                    html: `<div class="netmap-link-label" style="${tlStyle}">${labelHtml}</div>`,
                     iconAnchor: [0, 0]
                 });
                 const midChordPx     = L.point((fromContPx.x + toContPx.x) / 2, (fromContPx.y + toContPx.y) / 2);

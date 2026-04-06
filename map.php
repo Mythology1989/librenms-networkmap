@@ -14,6 +14,9 @@ if (!is_array($hidden_links)) { $hidden_links = []; }
 $link_priorities_raw  = netmap_get_setting('link_priorities', '{}');
 $link_priorities_arr  = json_decode($link_priorities_raw, true);
 if (!is_array($link_priorities_arr)) { $link_priorities_arr = []; }
+$map_styles_raw       = netmap_get_setting('map_styles', '{}');
+$map_styles_arr       = json_decode($map_styles_raw, true);
+if (!is_array($map_styles_arr)) { $map_styles_arr = []; }
 
 ?>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css"
@@ -48,7 +51,8 @@ window.netmapConfig = {
     apiLinks:    '/plugin/v1/NetworkMap?api=links',
     apiSettings: '/plugin/v1/NetworkMap?api=settings',
     hiddenLinks: <?= json_encode($hidden_links) ?>,
-    linkPriorities: <?= json_encode($link_priorities_arr) ?>
+    linkPriorities: <?= json_encode($link_priorities_arr) ?>,
+    styles: <?= json_encode($map_styles_arr) ?>
 };
 </script>
 
