@@ -7,8 +7,8 @@ mostrando todos los dispositivos monitorizados con sus enlaces, estado y tráfic
 Se integra como pestaña nativa en LibreNMS y opcionalmente expone una URL de visualización
 para pantallas de TV/NOC.
 
-**Nombre propuesto:** `NetworkMap` (ruta: `/plugin/p=NetworkMap`)  
-**Repositorio:** https://github.com/Mythology1989/librenms-networkmap  
+**Nombre:** `NetworkMap` (ruta: `/plugin/v1/NetworkMap`)
+**Repositorio:** https://github.com/Mythology1989/librenms-networkmap
 **Licencia:** MIT
 
 ---
@@ -30,21 +30,25 @@ para pantallas de TV/NOC.
 
 ```
 /opt/librenms/html/plugins/NetworkMap/
-├── NetworkMap.php          # Punto de entrada del plugin (requerido por LibreNMS)
+├── NetworkMap.php          # Clase de registro de hooks (menu) — instanciada por Laravel
+├── NetworkMap.inc.php      # Vista/router principal — servida por PluginLegacyController
 ├── map.php                 # Vista principal del mapa
-├── tv.php                  # Vista TV/NOC (fullscreen, sin navbar)
+├── tv.php                  # Vista TV/NOC (fullscreen, token auth, sin navbar)
+├── config.php              # Panel de configuración admin
 ├── api/
 │   ├── devices.php         # Devuelve dispositivos con lat/lng y estado
 │   ├── links.php           # Devuelve enlaces LLDP + manuales con tráfico
 │   └── settings.php        # GET/POST configuración del plugin
 ├── js/
-│   ├── networkmap.js       # Lógica principal del mapa
+│   ├── networkmap.js       # Toda la lógica del mapa
 │   └── leaflet.min.js      # Leaflet local (fallback si CDN falla)
 ├── css/
 │   └── networkmap.css      # Estilos del plugin
 ├── includes/
-│   └── db.php              # Helpers para queries a LibreNMS DB
-└── README.md               # Documentación e instalación
+│   └── db.php              # Helpers para queries a LibreNMS DB (dbFacile)
+└── sql/
+    ├── install.sql         # Creación de tablas plugin_networkmap_*
+    └── uninstall.sql       # Drop de tablas propias (NUNCA tablas core)
 ```
 
 ---
@@ -79,13 +83,16 @@ SELECT
   d.uptime,
   d.type,
   d.os,
-  COUNT(a.alert_id) as active_alerts
+  COUNT(a.id) as active_alerts
 FROM devices d
 JOIN locations l ON l.id = d.location_id
+LEFT JOIN plugin_networkmap_device_labels ndl ON ndl.device_id = d.device_id
 LEFT JOIN alerts a ON a.device_id = d.device_id AND a.state = 1
 WHERE l.lat IS NOT NULL AND l.lng IS NOT NULL
 GROUP BY d.device_id
 ```
+
+> Nota: usar `COUNT(a.id)`, no `COUNT(a.alert_id)` — la tabla `alerts` usa `id` como PK.
 
 ### Query de enlaces LLDP (automáticos)
 ```sql
@@ -95,17 +102,19 @@ SELECT
   l.remote_device_id,
   l.local_port_id,
   l.remote_port_id,
+  p_local.ifName as local_port,
+  p_remote.ifName as remote_port,
   p_local.ifInOctets,
   p_local.ifOutOctets,
   p_local.ifSpeed,
-  p_local.ifOperStatus,
-  p_local.ifAlias
+  p_local.ifOperStatus
 FROM links l
 JOIN ports p_local ON p_local.port_id = l.local_port_id
+LEFT JOIN ports p_remote ON p_remote.port_id = l.remote_port_id
 WHERE l.remote_device_id IS NOT NULL
 ```
 
-### Tabla adicional para enlaces manuales
+### Tablas propias del plugin
 ```sql
 CREATE TABLE IF NOT EXISTS `plugin_networkmap_links` (
   `id`              INT AUTO_INCREMENT PRIMARY KEY,
@@ -116,10 +125,7 @@ CREATE TABLE IF NOT EXISTS `plugin_networkmap_links` (
   `label`           VARCHAR(255) DEFAULT NULL,
   `created_at`      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### Tabla de configuración
-```sql
 CREATE TABLE IF NOT EXISTS `plugin_networkmap_settings` (
   `key`   VARCHAR(100) PRIMARY KEY,
   `value` TEXT
@@ -128,12 +134,12 @@ CREATE TABLE IF NOT EXISTS `plugin_networkmap_settings` (
 -- map_provider: 'osm'
 -- google_api_key: ''
 -- refresh_interval: 60
--- zoom_threshold_cluster: 13
+-- zoom_threshold_cluster: 18
 -- default_zoom: 'auto'
-```
+-- excluded_locations: '[]'
+-- hidden_links: '[]'
+-- link_priorities: '{}'
 
-### Tabla de caché para tasas de tráfico
-```sql
 CREATE TABLE IF NOT EXISTS `plugin_networkmap_port_cache` (
   `port_id`       INT PRIMARY KEY,
   `in_octets`     BIGINT DEFAULT 0,
@@ -142,13 +148,19 @@ CREATE TABLE IF NOT EXISTS `plugin_networkmap_port_cache` (
   `out_bps`       BIGINT DEFAULT 0,
   `updated_at`    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS `plugin_networkmap_device_labels` (
+  `device_id`   INT PRIMARY KEY,
+  `map_label`   VARCHAR(255) NOT NULL,
+  `updated_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 ```
 
 ---
 
 ## API Endpoints (PHP)
 
-### `GET /plugin/p=NetworkMap&api=devices`
+### `GET /plugin/v1/NetworkMap?api=devices`
 Devuelve JSON con todos los dispositivos que tienen coordenadas.
 
 ```json
@@ -160,6 +172,7 @@ Devuelve JSON con todos los dispositivos que tienen coordenadas.
       "display_name": "Atalaya",
       "lat": 28.5123,
       "lng": -16.3456,
+      "location": "Atalaya",
       "status": 1,
       "uptime": 1234567,
       "type": "network",
@@ -171,7 +184,7 @@ Devuelve JSON con todos los dispositivos que tienen coordenadas.
 }
 ```
 
-### `GET /plugin/p=NetworkMap&api=links`
+### `GET /plugin/v1/NetworkMap?api=links`
 Devuelve enlaces LLDP + manuales con tráfico actual.
 
 ```json
@@ -194,107 +207,85 @@ Devuelve enlaces LLDP + manuales con tráfico actual.
 }
 ```
 
-### `GET/POST /plugin/p=NetworkMap&api=settings`
+### `GET/POST /plugin/v1/NetworkMap?api=settings`
 Lectura y escritura de configuración. Solo accesible para admins de LibreNMS.
-
-### `POST /plugin/p=NetworkMap&api=links&action=add_manual`
-Añade enlace manual entre dos dispositivos.
-
-```json
-{
-  "local_device_id": 12,
-  "remote_device_id": 5,
-  "local_port_id": 88,
-  "remote_port_id": 102,
-  "label": "Enlace 60GHz backup"
-}
-```
 
 ---
 
 ## Comportamiento del Mapa
 
-### Zoom dinámico (clustering)
-- **Zoom < 13** (vista general): Los dispositivos del mismo "nodo lógico" (lat/lng muy próximas, < 200m entre sí) se agrupan en un marcador de cluster. Se muestran los enlaces principales entre clusters.
-- **Zoom ≥ 13** (vista detallada): Se muestran todos los dispositivos individuales con sus enlaces.
-- El zoom inicial hace `fitBounds` automático para que entren todos los dispositivos en pantalla.
+### Zoom dinámico (clustering geográfico)
+- Dispositivos a menos de 150m entre sí se agrupan en un único nodo visual.
+- **Zoom < 18**: se muestran nodos agrupados con nombre "Ubicación (N dispositivos)".
+- **Zoom >= 18**: se muestran todos los dispositivos individuales.
+- El zoom inicial hace `fitBounds` automático con zoom máximo 17 para mostrar clusters.
 
 ### Nodos (marcadores)
 - **Círculo** coloreado según estado:
   - Verde: UP, sin alertas
-  - Amarillo: UP, con alertas activas
+  - Naranja: UP, con alertas activas
   - Rojo: DOWN
-- **Tamaño** del círculo: fijo (no proporcional al número de puertos — demasiado ruido)
-- **Label** con `display_name` del dispositivo siempre visible (no solo en hover)
+- **Label** siempre visible con nombre del dispositivo o grupo.
 
 ### Enlaces (líneas)
-- **Color:**
-  - Verde: interfaz UP
-  - Rojo: interfaz DOWN
-  - Gris: sin datos de tráfico
-- **Grosor** proporcional al tráfico: escala logarítmica de 1px (0%) a 8px (100% uso)
-- **Tooltip en hover:** muestra `local_port → remote_port`, velocidad, in/out en Mbps y % uso
-- Los enlaces manuales se muestran con línea discontinua para diferenciarlos de los LLDP
+- **Color por utilización:**
+  - Verde: interfaz UP, < 50% uso
+  - Naranja: interfaz UP, 50-80% uso
+  - Rojo: interfaz UP, > 80% uso o interfaz DOWN
+  - Azul discontinuo: enlace manual
+- **Grosor** logarítmico: 1px (0%) a 8px (100%)
+- **Etiqueta permanente** en el punto medio: "↓12M ↑3M" (solo si in_bps > 0 y enlace > 100px)
+- **Arcos Bezier** cuando hay múltiples enlaces entre el mismo par de nodos
+- **Tooltip en hover:** puertos local/remoto, velocidad, in/out Mbps, % uso
 
 ### Popup al hacer click en nodo
 ```
-[Hostname]
-Estado: UP ✓  |  Uptime: 14d 3h
+[Nombre del dispositivo]
+Estado: UP  |  Uptime: 14d 3h
 Alertas activas: 0
-Interfaces: 12 activas / 2 caídas
-[Ver en LibreNMS →]
+[Ver en LibreNMS]
 ```
 
 ### Popup al hacer click en enlace
 ```
-[local_port] ──── [remote_port]
+[local_port] ---- [remote_port]
 Velocidad: 1 Gbps
-↓ In:  324 Mbps (32.4%)
-↑ Out:  41 Mbps  (4.1%)
+In:  324 Mbps (32.4%)
+Out:  41 Mbps  (4.1%)
 Estado: UP
-[Ver puerto local →]  [Ver puerto remoto →]
 ```
 
 ---
 
-## Vista TV/NOC (`tv.php`)
+## Vista TV/NOC (tv.php)
 
-URL: `/plugin/p=NetworkMap&view=tv`
+URL: `/plugin/v1/NetworkMap?view=tv&token=<token>`
 
 - Fullscreen sin navbar de LibreNMS
-- Fondo oscuro (dark mode forzado)
-- Autorefresh igual que la configuración global
-- Muestra esquina inferior derecha: timestamp del último update
-- Muestra esquina superior derecha: contador de dispositivos UP/DOWN
-- **No hay popups ni interacción** — solo visualización
-- URL pública configurable (con token simple) para no requerir login de LibreNMS
-
-> Nota: No se implementa RTSP. El "streaming" para TV es simplemente esta URL
-> abierta en el navegador del TV/Chromecast. Es más robusto y sin dependencias.
+- Fondo oscuro (CARTO dark tiles)
+- Autorefresh configurable (soft refresh sin reload)
+- Esquina superior derecha: contador UP/DOWN
+- Esquina inferior derecha: timestamp del último update
+- Sin popups ni interacción — solo visualización
+- Acceso por token sin requerir login de LibreNMS
+- Usa `networkmap.js` con `tvMode:true` — misma lógica que el mapa principal
 
 ---
 
 ## Panel de Configuración
 
-Accesible desde el propio plugin para usuarios admin. Campos:
+`/plugin/v1/NetworkMap?view=settings` — solo accesible para admins.
 
 | Campo | Tipo | Default |
 |-------|------|---------|
 | Proveedor de mapa | select: OSM / Google Maps | OSM |
-| Google Maps API Key | text | — |
-| Intervalo de refresco | select: 15s / 30s / 60s / 120s | 60s |
-| Zoom de clustering | número (10-16) | 13 |
-| Token TV (acceso sin login) | text generado | — |
-| Regenerar token TV | botón | — |
-
----
-
-## Gestión de Enlaces Manuales
-
-Interfaz simple en el panel de configuración:
-- Tabla de enlaces manuales existentes con botón "Eliminar"
-- Formulario: selector de dispositivo A → selector de puerto A → selector de dispositivo B → selector de puerto B → label opcional
-- Los puertos se cargan via AJAX al seleccionar el dispositivo
+| Google Maps API Key | text (condicional) | — |
+| Intervalo de refresco | select: 10s / 15s / 30s / 60s / 120s | 60s |
+| Zoom de clustering | número (10-19) | 18 |
+| Token TV | text generado + botón regenerar | — |
+| Locations excluidas | checkboxes por location | ninguna |
+| Filtro de enlaces | tabla con checkbox + prioridad | todos visibles |
+| Nombres en el mapa | tabla editable de map_label por dispositivo | — |
 
 ---
 
@@ -305,11 +296,11 @@ Interfaz simple en el panel de configuración:
 cd /opt/librenms/html/plugins
 git clone https://github.com/Mythology1989/librenms-networkmap NetworkMap
 
-# 2. Crear tablas adicionales
-mysql -u librenms -p librenms < NetworkMap/sql/install.sql
-
-# 3. Dar permisos
+# 2. Dar permisos
 chown -R librenms:librenms NetworkMap/
+
+# 3. Crear tablas adicionales
+mysql -u librenms -p librenms < NetworkMap/sql/install.sql
 
 # 4. Activar en LibreNMS
 # LibreNMS → Settings → Plugins → NetworkMap → Enable
@@ -319,17 +310,17 @@ chown -R librenms:librenms NetworkMap/
 
 ## Criterios de Éxito
 
-- [ ] Plugin aparece en el menú de LibreNMS sin errores PHP
-- [ ] Mapa carga con todos los dispositivos que tienen lat/lng en LibreNMS
-- [ ] Enlaces LLDP se dibujan automáticamente sin configuración manual
-- [ ] Color y grosor de enlace refleja tráfico real (verificar contra datos de LibreNMS)
-- [ ] Popup de nodo muestra uptime y alertas reales
-- [ ] Popup de enlace muestra in/out en Mbps y % uso
-- [ ] Refresco automático funciona sin recargar la página
-- [ ] Vista TV accesible sin login con token
-- [ ] Panel de configuración guarda/lee correctamente (OSM ↔ Google Maps)
-- [ ] Añadir y eliminar enlace manual funciona y aparece en el mapa
-- [ ] Clustering visible al hacer zoom out
+- [x] Plugin aparece en el menú de LibreNMS sin errores PHP
+- [x] Mapa carga con todos los dispositivos que tienen lat/lng en LibreNMS
+- [x] Enlaces LLDP se dibujan automáticamente sin configuración manual
+- [x] Color y grosor de enlace refleja tráfico real
+- [x] Popup de nodo muestra uptime y alertas reales
+- [x] Popup de enlace muestra in/out en Mbps y % uso
+- [x] Refresco automático funciona sin recargar la página
+- [x] Vista TV accesible sin login con token
+- [x] Panel de configuración guarda/lee correctamente (OSM ↔ Google Maps)
+- [x] Añadir y eliminar enlace manual funciona y aparece en el mapa
+- [x] Clustering visible al hacer zoom out
 
 ---
 
@@ -339,25 +330,21 @@ chown -R librenms:librenms NetworkMap/
 - Exportar mapa como imagen
 - Edición de posición GPS desde el mapa (se hace desde LibreNMS nativo)
 - Notificaciones push en el mapa
-- Submapas por zona (se consigue con zoom + clustering)
+- Panel de estilos configurable (colores, tamaños) — previsto para v1.1
+- Solapamiento de enlaces entre pares distintos — limitación conocida de v1.0
 
 ---
 
-## Notas de Implementación para Claude Code
+## Notas técnicas para desarrollo futuro
 
-1. **Auth:** Usar el sistema de auth de LibreNMS. Los endpoints `api/*.php` deben verificar sesión activa con `require_once '../../../includes/defaults.inc.php'` y el patrón estándar de plugins LibreNMS.
+1. **Auth en `api/*.php`:** `auth()->check()` para sesión, `auth()->user()->hasRole('admin')` para admin. Todos los endpoints deben terminar en `exit;`.
 
-2. **No tocar tablas core de LibreNMS.** Solo lectura en `devices`, `ports`, `links`, `alerts`, `locations`. Escritura solo en las tablas propias del plugin (`plugin_networkmap_*`).
+2. **DB:** Solo dbFacile — `dbFetchRows()`, `dbFetchRow()`, `dbInsert()`, `dbUpdate()`, `dbDelete()`. No usar `DB::` facade de Laravel.
 
-3. **Leaflet desde CDN** con fallback local. Google Maps solo se carga si está configurado y hay API key.
+3. **Parámetros GET:** usar `request()->query('param', 'default')`, no `$_GET`.
 
-4. **El cálculo de bps** se hace desde `ifInOctets`/`ifOutOctets` (contadores acumulados). El backend debe guardar el valor anterior y el timestamp para calcular la tasa actual: `bps = (octets_now - octets_prev) * 8 / seconds_elapsed`. Guardar en `plugin_networkmap_port_cache`.
+4. **URLs del plugin:** `/plugin/v1/NetworkMap?param=valor`. No usar `/plugin/p=NetworkMap`.
 
-5. **Versión LibreNMS en producción:** instalación con MariaDB 10.11 en Debian 12.
+5. **Cálculo de tráfico:** `bps = (octets_now - octets_prev) * 8 / seconds_elapsed`. Guardar snapshot en `plugin_networkmap_port_cache`. El poller de LibreNMS actualiza los octets cada ~5 minutos.
 
-6. **Validación de queries:** disponible una conexión de solo lectura a la BD de producción:
-   - Host: 10.2.112.2
-   - Usuario: netmap_ro
-   - Password: NetmapRO2026!
-   - Base de datos: librenms
-   - Comando: `mysql -u netmap_ro -p'NetmapRO2026!' -h 10.2.112.2 librenms -e "QUERY;"`
+6. **Nombres de dispositivos:** jerarquía `COALESCE(map_label, display, sysName, hostname)`. Incluir siempre `sysName` o los dispositivos sin `display` mostrarán IPs.
