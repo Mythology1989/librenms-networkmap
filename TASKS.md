@@ -4,7 +4,7 @@
 > con estado y tráfico en tiempo real de todos los dispositivos monitorizados.
 
 ## Estado: v1.0 COMPLETADA — TODAS LAS FASES
-Última actualización: 2026-04-04
+Última actualización: 2026-04-06
 
 ---
 
@@ -17,7 +17,7 @@
 - [x] `api/devices.php` — devuelve JSON de dispositivos con lat/lng y estado (2026-04-03)
 - [x] `api/links.php` — devuelve JSON de enlaces LLDP (sin tráfico aún) (2026-04-03)
 - [x] `api/settings.php` — GET/POST de configuración básica (2026-04-03)
-- [ ] Verificar que el plugin aparece en LibreNMS → Settings → Plugins sin errores PHP
+- [x] Verificar que el plugin aparece en LibreNMS → Settings → Plugins sin errores PHP (2026-04-05)
 
 ## Fase 2: Mapa básico (Leaflet + nodos + enlaces)
 
@@ -73,7 +73,7 @@
 - [x] `sql/uninstall.sql` — drop solo de tablas `plugin_networkmap_*` (2026-04-03)
 - [x] `README.md` con instrucciones de instalación paso a paso (2026-04-03)
 - [x] Verificar todos los criterios de éxito definidos en `SPEC.md` (2026-04-03)
-- [ ] Primer commit público en GitHub bajo cuenta/organización FibraT
+- [x] Primer commit público en GitHub (2026-04-05)
 
 ## Fase 6: Tráfico simétrico + filtro de enlaces + nombres personalizados (2026-04-03)
 
@@ -97,6 +97,15 @@
 - [x] `js/networkmap.js` — carga Google Maps JS API + Leaflet.GoogleMutant si provider=google + key (2026-04-04)
 - [x] `js/networkmap.js` — fallback a OSM con aviso si provider=google pero sin key (2026-04-04)
 - [x] Verificado en producción: mapa OSM funciona, settings guardan, TV paridad ✓ (2026-04-04)
+
+## Fase 8: Correcciones post-lanzamiento (2026-04-05/06)
+
+- [x] `js/networkmap.js` — etiqueta ↓X ↑Y colocada en vértice real del arco Bezier (t=0.5), no en el punto de control (2026-04-05)
+- [x] `tv.php` — eliminar ~190 líneas de JS duplicado; cargar `networkmap.js` con `tvMode:true` (2026-04-05)
+- [x] `js/networkmap.js` — soporte `tvMode`: CARTO dark tiles, sin popups/tooltips, sin controles, `tvApiUrl`, `onTvDataLoaded` callback (2026-04-05)
+- [x] `tv.php` — leer `zoom_threshold_cluster` (igual que `map.php`), no `zoom_threshold` (2026-04-05)
+- [x] `tv.php` — añadir `l.location` y `d.sysName` al SELECT para paridad de labels con mapa principal (2026-04-06)
+- [x] Verificado en producción: labels TV coinciden con mapa principal, clustering al mismo zoom ✓ (2026-04-06)
 
 ---
 
@@ -133,3 +142,30 @@
 - `tv.php` — bestLabelLink prepass respeta link_priorities (prioridad < = mejor)
 - `config.php` — makeTableSortable() puro JS para 3 tablas; campo google_api_key condicional
 - `js/networkmap.js` — provider-aware tile loading: Google Maps + Mutant async, deferStart flag, OSM fallback
+
+### Fase 8 (2026-04-05/06)
+- `js/networkmap.js` — fix etiqueta Bezier: arcVertexPx = (midChordPx + cpPx)/2 en renderGrouped y renderIndividual
+- `js/networkmap.js` — tvMode: config.mapId, CARTO dark tiles, sin popups/tooltips/controles, rama loadData tvMode
+- `tv.php` — eliminado JS propio (~190 líneas); usa networkmap.js + window.netmapConfig{tvMode:true}
+- `tv.php` — zoom_threshold_cluster (correcto) en lugar de zoom_threshold
+- `tv.php` — l.location + d.sysName en query para paridad de labels con mapa principal
+
+---
+
+## v1.0 completada (2026-04-06)
+
+Plugin NetworkMap para LibreNMS operativo en producción (10.2.112.2).
+
+**Backend PHP:**
+- Endpoints API: `api/devices.php`, `api/links.php`, `api/settings.php` — auth con `auth()->check()`, terminan en `exit;`
+- `includes/db.php` — helpers dbFacile: `netmap_get_setting`, `netmap_calc_bps`, `netmap_upsert_port_cache`
+- Tablas propias: `plugin_networkmap_links`, `plugin_networkmap_settings`, `plugin_networkmap_port_cache`, `plugin_networkmap_device_labels`
+- `config.php` — panel admin: proveedor de mapa, zoom clustering, token TV, enlaces ocultos, nombres personalizados, locations excluidas
+
+**Frontend JS:**
+- `networkmap.js` — clustering geográfico Haversine, Bezier arcs con etiqueta en vértice real, colores por utilización, popups, autorefresh, tvMode
+- Tile providers: OSM (default), Google Maps (condicional con API key), CARTO dark (tvMode)
+
+**Vista TV/NOC:**
+- `tv.php` — auth por token `hash_equals()`, endpoint `?format=json`, carga `networkmap.js` con `tvMode:true`
+- CARTO dark tiles, sin popups, clustering y Bezier idénticos al mapa principal

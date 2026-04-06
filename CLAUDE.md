@@ -140,11 +140,23 @@ siempre saldrá a 0.
   es 0 (p.ej. interfaces VLAN/bridge). La función `linkWeight()` clampea a 100%
   para el cálculo del grosor (max 8px). La utilización en el popup sí puede
   superar 100% — es información útil para detectar links mal configurados.
-- **Vista TV (`tv.php`) — auth solo por token, sin sesión.** La vista TV hace
-  `exit` al final para bypasear el Blade wrapper. Valida el token con
-  `hash_equals()` antes de cualquier output. Los datos se cargan server-side
-  directamente (sin AJAX), así el autorefresh con `location.reload()` preserva
-  el token en la URL y no necesita sesión de LibreNMS.
+- **Vista TV (`tv.php`) — auth solo por token, sin sesión.** Valida el token con
+  `hash_equals()` antes de cualquier output. Hace `exit` al final para bypasear
+  el Blade wrapper. El autorefresh lo maneja `networkmap.js` vía `setInterval →
+  loadData()` que llama al endpoint `?format=json` — no `location.reload()`.
+- **`tv.php` debe cargar `networkmap.js` con `tvMode:true`**, no mantener JS propio.
+  Duplicar la lógica del mapa en TV genera divergencias inevitables (Bezier, clustering,
+  labels, hidden_links). Patrón correcto: `window.netmapConfig = { tvMode: true,
+  mapId: 'tv-map', tvApiUrl: '...', onTvDataLoaded: function(data){...} }` +
+  `<script src="/plugins/NetworkMap/js/networkmap.js"></script>`.
+- **`zoom_threshold_cluster` es la clave correcta en la BD** (no `zoom_threshold`).
+  `map.php` usa `netmap_get_setting('zoom_threshold_cluster', 18)`. Usar el nombre
+  incorrecto da un valor por defecto distinto y el clustering no coincide entre vistas.
+- **COALESCE en queries de dispositivos debe incluir `sysName`.**
+  Orden correcto: `COALESCE(ndl.map_label, d.display, d.sysName, d.hostname)`.
+  Sin `d.sysName`, dispositivos sin `display` ni `map_label` muestran el hostname
+  (normalmente una IP de gestión) en lugar del nombre SNMP. Aplica a cualquier query
+  que construya el label de dispositivo (incluyendo `tv.php`).
 - **Labels de Leaflet.markercluster — sincronización manual obligatoria.** Los
   DivIcon labels en un `L.layerGroup()` separado no se ocultan automáticamente
   cuando el CircleMarker correspondiente entra en un cluster. Solución: guardar
