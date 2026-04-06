@@ -22,10 +22,11 @@ if ($valid_token === '' || !hash_equals($valid_token, $token)) {
 $devices_raw = dbFetchRows('
     SELECT
         d.device_id   AS id,
-        COALESCE(ndl.map_label, d.display, d.hostname) AS display_name,
+        COALESCE(ndl.map_label, d.display, d.sysName, d.hostname) AS display_name,
         d.status,
         l.lat,
-        l.lng
+        l.lng,
+        l.location
     FROM devices d
     JOIN locations l ON l.id = d.location_id
     LEFT JOIN plugin_networkmap_device_labels ndl ON ndl.device_id = d.device_id
@@ -44,6 +45,7 @@ if (is_array($devices_raw)) {
         $devices[] = [
             'id'           => (int) $row['id'],
             'display_name' => $row['display_name'],
+            'location'     => $row['location'] ?? '',
             'status'       => (int) $row['status'],
             'lat'          => (float) $row['lat'],
             'lng'          => (float) $row['lng'],
