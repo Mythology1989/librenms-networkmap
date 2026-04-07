@@ -3,8 +3,8 @@
 > Plugin PHP nativo para LibreNMS que muestra un mapa geográfico interactivo
 > con estado y tráfico en tiempo real de todos los dispositivos monitorizados.
 
-## Estado: v1.0 COMPLETADA
-Última actualización: 2026-04-06
+## Estado: v1.1 COMPLETADA
+Última actualización: 2026-04-07
 
 ---
 
@@ -79,9 +79,12 @@
 
 ---
 
-## v1.1 — Panel de estilos (pendiente)
+## v1.1 — Panel de estilos (2026-04-07)
 
-- [ ] Panel de configuración visual: tamaño y color de nodos
-- [ ] Panel de configuración visual: grosor y color de enlaces
-- [ ] Panel de configuración visual: tamaño y color de labels
-- [ ] Perfiles separados para modo mapa y modo TV
+- [x] `sql/install.sql` — INSERT IGNORE `map_styles` con perfiles map/tv y 15 campos por perfil (2026-04-07)
+- [x] `api/settings.php` — añadir `map_styles` a `$allowed_keys` (2026-04-07)
+- [x] `js/networkmap.js` — objeto `S` extraído de `config.styles[profile]`; colores de nodo, enlace, grosor y labels son dinámicos (2026-04-07)
+- [x] `map.php` + `tv.php` — inyectar `map_styles` como `styles:` en `netmapConfig` (2026-04-07)
+- [x] `config.php` — panel "Estilos del mapa" con tabs map/tv, SVG preview en tiempo real, 15 campos por perfil, guardar y restablecer defaults (2026-04-07)
+- [x] Desplegado en producción y verificado: DB, API, networkmap.js y config panel ✓ (2026-04-07)
+- [x] Tag `v1.1` anotado y publicado en GitHub (2026-04-07)
